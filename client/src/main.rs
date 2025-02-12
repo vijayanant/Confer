@@ -1,7 +1,7 @@
 mod proto;
 
-use crate::proto::confer::{SetRequest, SetResponse, GetRequest, GetResponse};
 use crate::proto::confer::confer_client::ConferClient;
+use crate::proto::confer::{GetRequest, GetResponse, SetRequest, SetResponse};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

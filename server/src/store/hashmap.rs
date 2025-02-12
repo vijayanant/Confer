@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::DataStoreError;
 use super::ConfigPath;
+use super::DataStoreError;
 
 #[derive(Default)]
 pub struct HashMapDataStore {
@@ -20,13 +20,17 @@ impl HashMapDataStore {
         let data = self.data.lock().unwrap();
         match data.get(&path.0) {
             Some(value) => Ok(value.clone()),
-            None => Err(DataStoreError::NotFound {path: path.0.clone()}),
+            None => Err(DataStoreError::NotFound {
+                path: path.0.clone(),
+            }),
         }
     }
 
     pub async fn set(&self, path: &ConfigPath, value: Vec<u8>) -> Result<(), DataStoreError> {
         if path.0.is_empty() {
-            return Err(DataStoreError::InvalidPath {path : path.0.clone()});
+            return Err(DataStoreError::InvalidPath {
+                path: path.0.clone(),
+            });
         }
 
         let mut data = self.data.lock().unwrap();
@@ -38,13 +42,16 @@ impl HashMapDataStore {
         let mut data = self.data.lock().unwrap();
         match data.remove(&path.0) {
             Some(_) => Ok(()),
-            None => Err(DataStoreError::NotFound {path: path.0.clone()}),
+            None => Err(DataStoreError::NotFound {
+                path: path.0.clone(),
+            }),
         }
     }
 
     pub async fn list(&self, path: &ConfigPath) -> Result<Vec<String>, DataStoreError> {
         let data = self.data.lock().unwrap();
-        let result = data.keys()
+        let result = data
+            .keys()
             .filter(|k| k.starts_with(&path.0))
             .cloned()
             .collect();
