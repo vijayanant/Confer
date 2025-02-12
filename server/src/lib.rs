@@ -6,11 +6,13 @@ use std::error::{Error};
 use tonic::transport::Server;
 use service::ConfigService;
 
+use crate::store::HashMapDataStore;
 use crate::proto::confer::confer_server::ConferServer;
 
 pub async fn start_server(addr: &str) -> Result<(), Box<dyn Error>> {
 
-    let service = ConfigService::new();
+    let data_store =  HashMapDataStore::new();
+    let service    = ConfigService::new(data_store);
 
     println!("Server listening on {}", addr);
 

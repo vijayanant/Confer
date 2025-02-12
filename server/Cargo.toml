@@ -2,6 +2,11 @@
 name = "confer"
 version = "0.1.0"
 edition = "2021"
+authors = ["Vijay Anant<vijay.anantharamaiah@gmail.com.com>"]
+repository = "https://github.com/vijayanant/confer"
+homepage = "https://github.com/vijayanant/confer"
+keywords = ["rust", "grpc", "distributed-systems", "raft", "learning"]
+documentation = "https://github.com/vijayanant/confer"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -9,6 +14,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tonic = "0.12.3"
 prost = "0.13.4"
+thiserror = "2.0.11"
 
 [build-dependencies]
 tonic-build = "0.12.3"

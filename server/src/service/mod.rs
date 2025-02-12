@@ -1,18 +1,22 @@
+mod service_test;
+
+use std::sync::Arc;
+use tokio::sync::Mutex; // async compatible Guard
 use tonic::{Request, Response, Status};
-use crate::store::KVStore;
+
+use crate::store::{HashMapDataStore, ConfigPath, DataStoreError};
 use crate::proto::confer:: {SetRequest, SetResponse, GetRequest, GetResponse, DelRequest, DelResponse};
 use crate::proto::confer::confer_server::Confer;
 
 #[derive(Default)]
 pub struct ConfigService {
-    store : KVStore,
+    store : Arc<Mutex<HashMapDataStore>>,
 }
 
 impl ConfigService {
-    pub fn new() -> Self {
-        println!("ConfigService -> new()");
+    pub fn new(data_store:HashMapDataStore) -> Self {
         ConfigService {
-           store : KVStore::new(),
+           store : Arc::new(Mutex::new(data_store)),
         }
     }
 }
@@ -21,22 +25,34 @@ impl ConfigService {
 impl Confer for ConfigService {
     async fn set(&self, request:Request<SetRequest>) -> Result<Response<SetResponse>, Status> {
         let req = request.into_inner();
-        self.store.set(&req.path, req.value);
+        let path = ConfigPath::new(&req.path)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let data = self.store.lock();
+        data.await.set(&path, req.value.into_bytes()).await
+            .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(SetResponse{success: true}))
     }
 
     async fn get(&self, request:Request<GetRequest>) -> Result<Response<GetResponse>, Status> {
-        let path = request.into_inner().path;
-        let val = self.store.get(&path);
+        let req = request.into_inner();
+        let path = ConfigPath::new(&req.path)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let data = self.store.lock();
+        let val = data.await.get(&path).await
+            .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(GetResponse {
-            value: val.unwrap_or_default(),
+            value: String::from_utf8(val).expect("{val} is is expected to be String" ),
         }))
     }
 
     async fn del(&self, request:Request<DelRequest>) -> Result<Response<DelResponse>, Status> {
-        let path = request.into_inner().path;
-        self.store.delete(&path);
+        let req = request.into_inner();
+        let path = ConfigPath::new(&req.path)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        let data = self.store.lock();
+        data.await.remove(&path).await
+            .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(DelResponse{success:true}))
     }
@@ -51,57 +67,4 @@ impl Confer for ConfigService {
             //.collect()
     //}
 }
-
-//#[cfg(test)]
-//mod tests {
-    //use super::*;
-
-
-    //#[test]
-    //fn test_create_and_get() {
-        //let config = ConfigService::new();
-        //config.create("config/database/host", "localhost".to_string());
-        //config.create("config/database/port", "5432".to_string());
-
-        //assert_eq!(onfig.get("config/database/host"), Some("localhost".to_string()));
-        //assert_eq!(onfig.get("config/database/port"), Some("5432".to_string()));
-    //}
-
-    //#[test]
-    //fn test_delete() {
-        //let config = ConfigService::new();
-        //config.create("config/database/host", "localhost".to_string());
-        //assert!(onfig.delete("config/database/host"));
-        //assert_eq!(onfig.get("config/database/host"), None);
-    //}
-
-    //#[test]
-    //fn test_list_children() {
-        //let config = ConfigService::new();
-        //config.create("config/services/user/session", "active".to_string());
-        //config.create("config/services/user/preferences/theme", "dark".to_string());
-        //config.create("config/services/admin/session", "inactive".to_string());
-
-        //let mut children = config.list_children("config/services/user");
-        //children.sort();
-        //assert_eq!(children, vec!["preferences/theme".to_string(), "session".to_string()]);
-
-        //let admin_children = config.list_children("config/services/admin");
-        //assert_eq!(admin_children, vec!["session".to_string()]);
-    //}
-
-    //#[test]
-    //fn test_non_existent_key() {
-        //let config = ConfigService::new();
-        //assert_eq!(onfig.get("config/nonexistent"), None);
-        //assert!(!onfig.delete("config/nonexistent"));
-    //}
-
-    //#[test]
-    //fn test_list_children_empty() {
-        //let config = ConfigService::new();
-        //let children = config.list_children("config/services");
-        //assert!(children.is_empty());
-    //}
-//}
 

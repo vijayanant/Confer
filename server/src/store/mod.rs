@@ -1,42 +1,43 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+mod hashmap; //import the HashMap implementation
+mod hashmap_test; // Declare the test module
 
-#[derive(Default, Debug)]
-pub struct KVStore {
-    data: Arc<Mutex<HashMap<String, String>>>,
+
+pub use self::hashmap::HashMapDataStore; // re-export
+
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum DataStoreError {
+    #[error("Path not found: {path}")]
+    NotFound { path: String },
+    #[error("Invalid path: {path}")]
+    InvalidPath { path: String },
+    #[error("Unknownerror: {source}")]
+    UnknownError { source: Box<dyn std::error::Error> }, // For other unexpected errors
 }
 
-impl KVStore {
-    pub fn new() -> Self {
-        println!("KVStore -> new()");
-        KVStore {
-            data: Arc::new(Mutex::new(HashMap::new())),
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConfigPath(pub String); // Public field for easy access
+
+impl ConfigPath {
+    pub fn new(path: &str) -> Result<Self, DataStoreError> {
+        if path.is_empty() {
+            return Err(DataStoreError::InvalidPath { path: path.to_string() }); //
         }
+        Ok(ConfigPath(path.to_string()))
     }
+    // ... other path-related methods
+}
 
-    pub fn set(&self, path: &str, value: String) {
-        let mut data = self.data.lock().unwrap();
-        data.insert(path.to_string(), value);
-    }
-
-    pub fn get(&self, path: &str) -> Option<String> {
-        let data = self.data.lock().unwrap();
-        data.get(path).cloned()
-    }
-
-    pub fn delete(&self, path: &str) -> bool {
-        let mut data = self.data.lock().unwrap();
-        data.remove(path).is_some()
-    }
 
     //List all keys that starts with a given prefix
-    pub fn list(&self, prefix: &str) -> Vec<String> {
-        let data = self.data.lock().unwrap();
-        data.keys()
-            .filter(|key| key.starts_with(prefix))
-            .cloned()
-            .collect()
-    }
-}
+    //pub fn list(&self, prefix: &str) -> Vec<String> {
+        //let data = self.data.lock().unwrap();
+        //data.keys()
+            //.filter(|key| key.starts_with(prefix))
+            //.cloned()
+            //.collect()
+    //}
 
 

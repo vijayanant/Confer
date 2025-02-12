@@ -27,7 +27,7 @@ There are lots and lots of things that can added here. But let me not get ahead 
 *   Adding persistence to survive restarts.
 *   Implementing service discovery so nodes can find each other.
 *   And, of course, lots and lots of testing!
-
+ 
 ## Building and Running (Work in Progress)
 
 This project is very much a work in progress.  Building and running instructions are likely to change as I learn and experiment.  The best place for now is to peek at the source code for the latest state of affairs.
@@ -49,7 +49,7 @@ This project is very much a work in progress.  Building and running instructions
    cargo build
    ```
    
-####3. Running (Currently Single Node)
+#### 3. Running (Currently Single Node)
 
 Currently, Confer can be run as a single node for testing the gRPC interface.  Distributed functionality using Raft is still under development.
 
