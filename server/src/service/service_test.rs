@@ -2,14 +2,14 @@
 mod tests {
     use crate::proto::confer::confer_server::Confer;
     use crate::proto::confer::{
-        DelRequest, DelResponse, GetRequest, GetResponse, SetRequest, SetResponse,
+        DelRequest, GetRequest, SetRequest,
     }; // Import your generated proto code (e.g., mod proto;)
     use crate::service::ConfigService;
-    use crate::store::DataStoreError; // Update with your error type
-    use crate::store::{ConfigPath, HashMapDataStore}; // Update with your actual path
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use tonic::{Request, Response, Status}; // Import your service implementation
+     // Update with your error type
+    use crate::store::HashMapDataStore; // Update with your actual path
+    
+    
+    use tonic::Request; // Import your service implementation
 
     #[tokio::test]
     async fn test_get_value() {
@@ -64,7 +64,7 @@ mod tests {
         });
         let response = service.set(set_request).await.unwrap();
 
-        assert_eq!(response.into_inner().success, true);
+        assert!(response.into_inner().success);
     }
 
     #[tokio::test]
@@ -85,7 +85,7 @@ mod tests {
         });
         let response = service.del(del_request).await.unwrap();
 
-        assert_eq!(response.into_inner().success, true);
+        assert!(response.into_inner().success);
 
         let get_request = Request::new(GetRequest {
             path: path.to_string(),
