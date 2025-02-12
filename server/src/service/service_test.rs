@@ -6,9 +6,9 @@ mod tests {
     }; // Import your generated proto code (e.g., mod proto;)
     use crate::service::ConfigService;
      // Update with your error type
-    use crate::store::HashMapDataStore; // Update with your actual path
-    
-    
+    use crate::core::datastore::HashMapDataStore; // Update with your actual path
+
+
     use tonic::Request; // Import your service implementation
 
     #[tokio::test]

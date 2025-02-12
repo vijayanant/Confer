@@ -8,7 +8,7 @@ use crate::proto::confer::confer_server::Confer;
 use crate::proto::confer::{
     DelRequest, DelResponse, GetRequest, GetResponse, SetRequest, SetResponse,
 };
-use crate::store::{ConfigPath, HashMapDataStore};
+use crate::core::datastore::{ConfigPath, HashMapDataStore};
 
 #[derive(Default)]
 pub struct ConfigService {

@@ -1,6 +1,6 @@
 mod proto;
 mod service;
-mod store;
+mod core;
 
 use confer::start_server;
 

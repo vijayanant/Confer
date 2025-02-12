@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    
-    use crate::store::DataStoreError::{InvalidPath, NotFound};
-    use crate::store::{ConfigPath, HashMapDataStore};
+
+    use crate::core::datastore::DataStoreError::{InvalidPath, NotFound};
+    use crate::core::datastore::{ConfigPath, HashMapDataStore};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

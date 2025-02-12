@@ -1,5 +1,4 @@
 mod hashmap; //import the HashMap implementation
-mod hashmap_test; // Declare the test module
 
 pub use self::hashmap::HashMapDataStore; // re-export
 
