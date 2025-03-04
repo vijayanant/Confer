@@ -61,8 +61,10 @@ impl ConferService for ConferServiceImpl {
     #[instrument(skip(self, request))]
     async fn get(&self, request: Request<ConfigPath>) -> Result<Response<ConfigValue>, Status> {
         let config_path = request.into_inner();
-
         debug!("Received get request for path: {:?}", &config_path);
+        if config_path.path.is_empty() {
+            return Err(Status::invalid_argument("Path cannot be empty"));
+        }
         match self.state_machine.get(&config_path).await {
             Ok(value) => {
                 debug!("Successfully retrieved value for path: {:?}", &config_path);
@@ -81,7 +83,11 @@ impl ConferService for ConferServiceImpl {
         let config_path = request.into_inner();
         let path = config_path.path.ok_or_else(|| Status::invalid_argument("Path is required"))?;
         let value = config_path.value.ok_or_else(|| Status::invalid_argument("Value is required"))?;
+
         debug!("Received set request for path: {:?}", &path);
+        if path.path.is_empty() {
+            return Err(Status::invalid_argument("Path cannot be empty"));
+        }
         match self.state_machine.set(&path, value.value).await {
             Ok(_) => {
                 debug!("Successfully set value for path: {:?}", &path);
@@ -99,6 +105,9 @@ impl ConferService for ConferServiceImpl {
         let config_path = request.into_inner();
 
         debug!("Received remove request for path: {:?}", &config_path);
+        if config_path.path.is_empty() {
+            return Err(Status::invalid_argument("Path cannot be empty"));
+        }
         match self.state_machine.remove(&config_path).await {
             Ok(_) => {
                 debug!("Successfully removed value for path: {:?}", &config_path);
@@ -116,6 +125,9 @@ impl ConferService for ConferServiceImpl {
         let config_path = request.into_inner();
 
         debug!("Received list request for path: {:?}", &config_path);
+        if config_path.path.is_empty() {
+            return Err(Status::invalid_argument("Path cannot be empty"));
+        }
         match self.state_machine.list(&config_path).await {
             Ok(paths) => {
                 debug!("Successfully listed paths with prefix: {:?}", &config_path);
@@ -129,3 +141,8 @@ impl ConferService for ConferServiceImpl {
         }
     }
 }
+
+
+#[cfg(test)]
+mod service_tests;
+

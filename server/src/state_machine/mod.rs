@@ -13,3 +13,6 @@ pub trait StateMachine: Send + Sync {
     async fn list(&self, path: &ConfigPath) -> Result<Vec<String>, ConferError>;
 }
 
+#[cfg(test)]
+pub mod hashmap_tests;
+

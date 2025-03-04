@@ -7,16 +7,21 @@ use crate::proto::confer::v1::ConfigPath;
 use crate::error::ConferError;
 use crate::state_machine::StateMachine;
 
+#[derive(Default)]
 pub struct HashMapStateMachine {
     data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
 impl HashMapStateMachine {
     pub fn new() -> Self {
-        debug!("Creating new HashMapStateMachine");
-        HashMapStateMachine {
-            data: Arc::new(Mutex::new(HashMap::new())),
+        Self::default()
+    }
+
+    fn validate_path(path: &ConfigPath) -> Result<(), ConferError> {
+        if path.path.is_empty() {
+            return Err(ConferError::InvalidPath { path: path.path.clone() });
         }
+        Ok(())
     }
 }
 
@@ -25,6 +30,8 @@ impl StateMachine for HashMapStateMachine {
     #[instrument(skip(self))]
     async fn get(&self, path: &ConfigPath) -> Result<Vec<u8>, ConferError> {
         debug!("Getting value for path: {}", path.path);
+        Self::validate_path(path)?;
+
         let data = self.data.lock().unwrap();
         match data.get(&path.path) {
             Some(value) => {
@@ -43,6 +50,7 @@ impl StateMachine for HashMapStateMachine {
     #[instrument(skip(self))]
     async fn set(&self, path: &ConfigPath, value: Vec<u8>) -> Result<(), ConferError> {
         debug!("Setting value for path: {}", path.path);
+        Self::validate_path(path)?;
         if path.path.is_empty() {
             debug!("Invalid path: {}", path.path);
             return Err(ConferError::InvalidPath {
@@ -59,6 +67,7 @@ impl StateMachine for HashMapStateMachine {
     #[instrument(skip(self))]
     async fn remove(&self, path: &ConfigPath) -> Result<(), ConferError> {
         debug!("Removing value for path: {}", path.path);
+        Self::validate_path(path)?;
         let mut data = self.data.lock().unwrap();
         match data.remove(&path.path) {
             Some(_) => {
@@ -77,6 +86,7 @@ impl StateMachine for HashMapStateMachine {
     #[instrument(skip(self))]
     async fn list(&self, path: &ConfigPath) -> Result<Vec<String>, ConferError> {
         debug!("Listing paths with prefix: {}", path.path);
+        Self::validate_path(path)?;
         let data = self.data.lock().unwrap();
         let result: Vec<String> = data
             .keys()
