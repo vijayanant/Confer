@@ -1,12 +1,42 @@
 mod proto;
 mod service;
-mod core;
+mod state_machine;
+mod error;
 
-use confer::start_server;
+use tonic::transport::Server;
+use tracing::{info, error};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::proto::confer::v1::confer_service_server::ConferServiceServer;
+use crate::service::ConferServiceImpl;
+use crate::state_machine::HashMapStateMachine;
+
+fn init_tracing() {
+    if let Err(e) = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "confer=debug".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()
+    {
+        error!("Failed to initialize tracing: {}", e);
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "127.0.0.1:6789";
-    start_server(addr).await?;
+    init_tracing();
+
+    let addr = "[::1]:50051".parse()?;
+    let state_machine = HashMapStateMachine::new();
+    let confer_service = ConferServiceImpl::new(Box::new(state_machine));
+
+    Server::builder()
+        .add_service(ConferServiceServer::new(confer_service))
+        .serve(addr)
+        .await?;
+    info!("Server listening on: {}", addr);
+
+
     Ok(())
 }

@@ -1,0 +1,89 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use async_trait::async_trait;
+use tracing::{debug, instrument};
+
+use crate::proto::confer::v1::ConfigPath;
+use crate::error::ConferError;
+use crate::state_machine::StateMachine;
+
+pub struct HashMapStateMachine {
+    data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+}
+
+impl HashMapStateMachine {
+    pub fn new() -> Self {
+        debug!("Creating new HashMapStateMachine");
+        HashMapStateMachine {
+            data: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl StateMachine for HashMapStateMachine {
+    #[instrument(skip(self))]
+    async fn get(&self, path: &ConfigPath) -> Result<Vec<u8>, ConferError> {
+        debug!("Getting value for path: {}", path.0);
+        let data = self.data.lock().unwrap();
+        match data.get(&path.0) {
+            Some(value) => {
+                debug!("Value found for path: {}", path.0);
+                Ok(value.clone())
+            }
+            None => {
+                debug!("Value not found for path: {}", path.0);
+                Err(ConferError::NotFound {
+                    path: path.0.clone(),
+                })
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn set(&self, path: &ConfigPath, value: Vec<u8>) -> Result<(), ConferError> {
+        debug!("Setting value for path: {}", path.0);
+        if path.0.is_empty() {
+            debug!("Invalid path: {}", path.0);
+            return Err(ConferError::InvalidPath {
+                path: path.0.clone(),
+            });
+        }
+
+        let mut data = self.data.lock().unwrap();
+        data.insert(path.0.clone(), value);
+        debug!("Value set for path: {}", path.0);
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn remove(&self, path: &ConfigPath) -> Result<(), ConferError> {
+        debug!("Removing value for path: {}", path.0);
+        let mut data = self.data.lock().unwrap();
+        match data.remove(&path.0) {
+            Some(_) => {
+                debug!("Value removed for path: {}", path.0);
+                Ok(())
+            }
+            None => {
+                debug!("Value not found for removal: {}", path.0);
+                Err(ConferError::NotFound {
+                    path: path.0.clone(),
+                })
+            }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn list(&self, path: &ConfigPath) -> Result<Vec<String>, ConferError> {
+        debug!("Listing paths with prefix: {}", path.0);
+        let data = self.data.lock().unwrap();
+        let result = data
+            .keys()
+            .filter(|k| k.starts_with(&path.0))
+            .cloned()
+            .collect();
+        debug!("Found {} paths with prefix: {}", result.len(), path.0);
+        Ok(result)
+    }
+}
