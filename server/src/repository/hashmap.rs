@@ -2,17 +2,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tracing::{debug, instrument};
+use serde::{Serialize, Deserialize};
 
 use crate::proto::confer::v1::ConfigPath;
 use crate::error::ConferError;
-use crate::state_machine::StateMachine;
+use crate::repository::ConferRepository;
 
-#[derive(Default)]
-pub struct HashMapStateMachine {
+
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize)]
+pub struct HashMapConferRepository {
     data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
-impl HashMapStateMachine {
+impl HashMapConferRepository {
     pub fn new() -> Self {
         Self::default()
     }
@@ -26,7 +29,7 @@ impl HashMapStateMachine {
 }
 
 #[async_trait]
-impl StateMachine for HashMapStateMachine {
+impl ConferRepository for HashMapConferRepository {
     #[instrument(skip(self))]
     async fn get(&self, path: &ConfigPath) -> Result<Vec<u8>, ConferError> {
         debug!("Getting value for path: {}", path.path);

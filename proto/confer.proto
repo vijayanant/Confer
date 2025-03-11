@@ -17,9 +17,11 @@ service ConferService {
   rpc List(ConfigPath) returns (ConfigList) {}
 }
 
-// ConfigPath represents the path of a configuration value.
+//Custom empty message
+message Empty {}
+
+// ConfigpPath  represents the configuration Path/key to a value  
 message ConfigPath {
-  // The path of the configuration value.
   string path = 1;
 }
 
@@ -49,5 +51,4 @@ message ErrorDetails {
   string message = 1;
 }
 
-// Custom empty message
-message Empty {}
+
