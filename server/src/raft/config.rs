@@ -10,7 +10,7 @@ use crate::raft::{
 
 use openraft_memstore::MemStore;
 use crate::raft::state_machine::ConferRepositoryAdaptor;
-use crate::repository::ConferRepository;
+use crate::repository::HashMapConferRepository;
 
 #[derive(
     Clone, Debug,
@@ -36,7 +36,7 @@ impl RaftTypeConfig for TypeConfig {
     type NodeId       = u64;
     type Node         = BasicNode;
     type Entry        = Entry<TypeConfig>;
-    type SnapshotData = ConferRepositoryAdaptor<ConferRepository>;
+    type SnapshotData = ConferRepositoryAdaptor<HashMapConferRepository>;
     type AsyncRuntime = TokioRuntime;
     type Responder    = ConferClientResponder;
 }

@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use crate::raft::config::TypeConfig;
 use crate::raft::operation::{Operation, OperationResponse};
 use crate::repository::ConferRepository;
@@ -8,11 +7,12 @@ use openraft_memstore::MemStore;
 use openraft::storage::Adaptor;
 use openraft::StorageError;
 use openraft::RaftTypeConfig;
-use tonic::Response;
+//use tonic::Response;
 use crate::error::ConferError;
 
 type LogEntry = <TypeConfig as RaftTypeConfig>::Entry;
 type NodeId = <TypeConfig as RaftTypeConfig>::NodeId;
+type Response = <TypeConfig as RaftTypeConfig>::R;
 
 
 #[derive(Clone, Debug)]
@@ -25,13 +25,13 @@ impl<T: ConferRepository> ConferRepositoryAdaptor<T> {
         ConferRepositoryAdaptor { repository }
     }
 
-    async fn apply<I>(&mut self, entries: I) -> Result<Vec<Response<TypeConfig>>, StorageError<NodeId>>
+    async fn apply<I>(&mut self, entries: I) -> Result<Vec<Response>, ConferError>
     where
         I: IntoIterator<Item = LogEntry> + Send,
     {
         let mut responses = Vec::new();
         for log_entry in entries {
-            let response = match &log_entry.payload {
+            let response: Response = match &log_entry.payload {
                 openraft::entry::EntryPayload::Normal(op) => {
                     match op {
                         Operation::Set { path, value } => {
@@ -39,22 +39,22 @@ impl<T: ConferRepository> ConferRepositoryAdaptor<T> {
                             self.repository
                                 .set(&confer_path, value.value.clone())
                                 .await
-                                .map_err(|e| StorageError::Other(e.to_string()))?;
-                            Ok(Response::new(OperationResponse::Success))
+                                .map_err(|e| ConferError::StorageError{message: e.to_string(),});
+                            OperationResponse::Success
                         }
                         Operation::Remove { path } => {
                             let confer_path = ConfigPath { path: path.path.clone() };
                             self.repository
                                 .remove(&confer_path)
                                 .await
-                                .map_err(|e| StorageErrorr::Other(e.to_string()))?;
-                            Ok(Response::new(OperationResponse::Success))
+                                .map_err(|e| ConferError::StorageError{ message: e.to_string(),});
+                            OperationResponse::Success
                         }
                     }
                 }
-                openraft::entry::EntryPayload::Membership { .. } => Ok(Response::new(OperationResponse::Success)),
-                openraft::entry::EntryPayload::Blank => Ok(Response::new(OperationResponse::Success)),
-            }?;
+                openraft::entry::EntryPayload::Membership { .. } => OperationResponse::Success,
+                openraft::entry::EntryPayload::Blank => OperationResponse::Success,
+            };
             responses.push(response);
         }
         Ok(responses)
