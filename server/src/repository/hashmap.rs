@@ -99,4 +99,18 @@ impl ConferRepository for HashMapConferRepository {
         debug!("Found {} paths with prefix: {}", result.len(), path.path);
         Ok(result)
     }
+
+
+    async fn get_serialized_data(&self) -> Result<Vec<u8>, ConferError> {
+        let data = self.data.lock().unwrap();
+        serde_json::to_vec(&*data).map_err(|e| ConferError::SerializationError{message: e.to_string()})
+    }
+
+    async fn replace_data(&mut self, serialized_data: Vec<u8>) -> Result<(), ConferError> {
+        let map: HashMap<String, Vec<u8>> = serde_json::from_slice(&serialized_data)
+            .map_err(|e| ConferError::DeserializationError{message: e.to_string()})?;
+        let mut data = self.data.lock().unwrap();
+        *data = map;
+        Ok(())
+    }
 }

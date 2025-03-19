@@ -1,27 +1,19 @@
 use std::fmt;
+use std::io::Cursor;
 
 use openraft::{ Entry, TokioRuntime, RaftTypeConfig, };
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 use openraft::BasicNode;
 use crate::raft::{
     operation:: {Operation, OperationResponse},
     client_responder::ConferClientResponder};
 
-use openraft_memstore::MemStore;
-use crate::raft::state_machine::ConferRepositoryAdaptor;
-use crate::repository::HashMapConferRepository;
-
-#[derive(
-    Clone, Debug,
-    Serialize, Deserialize,
-    PartialEq, Eq, Default, PartialOrd, Ord,)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord,)]
 pub struct NodeInfo {
     pub address: String,
     pub port: u16,
     pub custom_data: String, // Or a more structured type
 }
-
 
 #[derive(
     Copy, Clone, Debug,
@@ -36,12 +28,13 @@ impl RaftTypeConfig for TypeConfig {
     type NodeId       = u64;
     type Node         = BasicNode;
     type Entry        = Entry<TypeConfig>;
-    type SnapshotData = ConferRepositoryAdaptor<HashMapConferRepository>;
+    type SnapshotData = Cursor<Vec<u8>>;
     type AsyncRuntime = TokioRuntime;
     type Responder    = ConferClientResponder;
 }
 
-
+pub type NodeId = <TypeConfig as RaftTypeConfig>::NodeId;
+pub type Node = <TypeConfig as RaftTypeConfig>::Node;
 
 // TypeConfig struct is used as a generic parameter in the InstallSnapshotError
 // type. It  has  implement the std::fmt::Display trait, which is required for

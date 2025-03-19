@@ -1,6 +1,7 @@
 mod proto;
 mod service;
-mod state_machine;
+mod repository;
+mod raft;
 mod error;
 
 use tonic::transport::Server;
@@ -9,7 +10,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::proto::confer::v1::confer_service_server::ConferServiceServer;
 use crate::service::ConferServiceImpl;
-use crate::state_machine::HashMapStateMachine;
 
 fn init_tracing() {
     if let Err(e) = tracing_subscriber::registry()
@@ -27,15 +27,15 @@ fn init_tracing() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let addr = "[::1]:50051".parse()?;
-    let state_machine = HashMapStateMachine::new();
-    let confer_service = ConferServiceImpl::new(Box::new(state_machine));
+    //let addr = "[::1]:67891".parse()?;
+    //let state_machine = HashMapStateMachine::new();
+    //let confer_service = ConferServiceImpl::new(Box::new(state_machine));
 
-    Server::builder()
-        .add_service(ConferServiceServer::new(confer_service))
-        .serve(addr)
-        .await?;
-    info!("Server listening on: {}", addr);
+    //Server::builder()
+        //.add_service(ConferServiceServer::new(confer_service))
+        //.serve(addr)
+        //.await?;
+    //info!("Server listening on: {}", addr);
 
 
     Ok(())

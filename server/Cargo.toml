@@ -1,5 +1,5 @@
 [package]
-name = "confer"
+name = "confer-server"
 version = "0.1.0"
 edition = "2021"
 authors = ["Vijay Anant<vijay.anantharamaiah@gmail.com.com>"]
@@ -20,8 +20,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 async-trait = "0.1.87"
 prost-types = "0.13.5"
 bytes = "1.10.0"
-openraft = {version = "0.9.17", features = ["serde"]}
-openraft-memstore = "0.9.17"
+openraft = {version = "0.9.18", features = ["serde", "storage-v2"]}
 
 [build-dependencies]
 tonic-build = "0.12.3"

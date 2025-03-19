@@ -13,7 +13,7 @@ use openraft::raft::{
     VoteResponse,
 };
 
-use tonic::{transport::{Error, Channel,}, Request,};
+use tonic::{transport::Channel, Request,};
 use crate::raft::proto::raft_service_client::RaftServiceClient;
 use crate::raft::config::TypeConfig;
 use crate::raft::proto::GenericMessage;
@@ -110,7 +110,7 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
     async fn append_entries(
         &mut self,
         request: AppendEntriesRequest<TypeConfig>,
-        options: RPCOption,
+        _options: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, Node, RaftError<NodeId>>> {
 
         let serialized_request = serde_json::to_vec(&request)
@@ -131,7 +131,7 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
     async fn install_snapshot(
         &mut self,
         request: InstallSnapshotRequest<TypeConfig>,
-        option: RPCOption,
+        _option: RPCOption,
     ) -> Result<InstallSnapshotResponse<NodeId>, RPCError<NodeId, Node, RaftError<NodeId, openraft::error::InstallSnapshotError>>> {
 
         let serialized_request = serde_json::to_vec(&request)
@@ -152,7 +152,7 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
     async fn vote(
         &mut self,
         request: VoteRequest<NodeId>,
-        option: RPCOption,
+        _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, Node, RaftError<NodeId>>> {
         let serialized_request = serde_json::to_vec(&request)
             .map_err(|e| RPCError::Network(NetworkError::new(&e)))?;
