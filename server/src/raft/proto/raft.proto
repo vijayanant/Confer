@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package raft;
+
+// GenericMessage is used as a wrapper for all Raft RPC messages.
+// This approach decouples the network layer from the specific message types
+// defined in the openraft library. By treating all messages as raw bytes,
+// we avoid the need to define matching Protobuf types and simplify the
+// network implementation.
+//
+// The 'data' field contains the serialized Protobuf message from openraft.
+// The receiving end is responsible for deserializing this data into the
+// appropriate message type.
+message GenericMessage {
+  bytes data = 1; // Serialized Protobuf message data from openraft
+}
+
+// RaftService defines the RPC endpoints for Raft communication.
+// All RPCs use GenericMessage as both the request and response types.
+// This allows the network layer to remain agnostic to the message content.
+
+service RaftService {
+  rpc AppendEntries(GenericMessage) returns (GenericMessage);
+  rpc InstallSnapshot(GenericMessage) returns (GenericMessage);
+  rpc Vote(GenericMessage) returns (GenericMessage);
+}
+
