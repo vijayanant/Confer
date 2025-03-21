@@ -27,7 +27,7 @@ pub struct StoredSnapshot {
 }
 
 #[derive(Debug, Default)]
-pub struct Storage<T: ConferRepository> {
+pub struct StateMachine<T: ConferRepository> {
     pub repository: RwLock<T>,
     pub membership: RwLock<StoredMembership<NodeId, Node>>,
     pub last_applied_log: RwLock<Option<LogId<NodeId>>>,
@@ -35,9 +35,9 @@ pub struct Storage<T: ConferRepository> {
     snapshot_idx: AtomicU64,
 }
 
-impl<T: ConferRepository> Storage<T> {
+impl<T: ConferRepository> StateMachine<T> {
     pub fn new(repository: T) -> Self {
-        Storage {
+        StateMachine {
             repository: RwLock::new(repository),
             membership: RwLock::new(StoredMembership::default()),
             last_applied_log: RwLock::new(None),
@@ -47,7 +47,7 @@ impl<T: ConferRepository> Storage<T> {
     }
 }
 
-impl<T: ConferRepository> RaftSnapshotBuilder<TypeConfig> for Arc<Storage<T>> {
+impl<T: ConferRepository> RaftSnapshotBuilder<TypeConfig> for Arc<StateMachine<T>> {
     #[tracing::instrument(level = "trace", skip(self))]
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<NodeId>> {
         let repository = self.repository.read().await;
@@ -89,7 +89,7 @@ impl<T: ConferRepository> RaftSnapshotBuilder<TypeConfig> for Arc<Storage<T>> {
     }
 }
 
-impl<T: ConferRepository> RaftStateMachine<TypeConfig> for Arc<Storage<T>> {
+impl<T: ConferRepository> RaftStateMachine<TypeConfig> for Arc<StateMachine<T>> {
     type SnapshotBuilder = Self;
 
     async fn applied_state(

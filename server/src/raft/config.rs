@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::Cursor;
 
-use openraft::{ Entry, TokioRuntime, RaftTypeConfig, };
+use openraft::{TokioRuntime, RaftTypeConfig, };
 use serde::{Deserialize, Serialize};
 use openraft::BasicNode;
 use crate::raft::{
@@ -12,7 +12,7 @@ use crate::raft::{
 pub struct NodeInfo {
     pub address: String,
     pub port: u16,
-    pub custom_data: String, // Or a more structured type
+    pub custom_data: String,
 }
 
 #[derive(
@@ -27,7 +27,7 @@ impl RaftTypeConfig for TypeConfig {
     type R            = OperationResponse;
     type NodeId       = u64;
     type Node         = BasicNode;
-    type Entry        = Entry<TypeConfig>;
+    type Entry        = openraft::Entry<TypeConfig>;
     type SnapshotData = Cursor<Vec<u8>>;
     type AsyncRuntime = TokioRuntime;
     type Responder    = ConferClientResponder;
@@ -35,6 +35,8 @@ impl RaftTypeConfig for TypeConfig {
 
 pub type NodeId = <TypeConfig as RaftTypeConfig>::NodeId;
 pub type Node = <TypeConfig as RaftTypeConfig>::Node;
+pub type Entry = <TypeConfig as RaftTypeConfig>::Entry;
+
 
 // TypeConfig struct is used as a generic parameter in the InstallSnapshotError
 // type. It  has  implement the std::fmt::Display trait, which is required for

@@ -1,7 +1,8 @@
 pub mod proto;
 pub mod operation;
 pub mod config;
-pub mod storage;
+pub mod state_machine;
+pub mod log_storage;
 pub mod network;
 pub mod client_responder;
 
