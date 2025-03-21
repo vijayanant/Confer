@@ -28,7 +28,7 @@ pub struct StoredSnapshot {
 
 #[derive(Debug, Default)]
 pub struct StateMachine<T: ConferRepository> {
-    pub repository: RwLock<T>,
+    pub repository: Arc<RwLock<T>>,
     pub membership: RwLock<StoredMembership<NodeId, Node>>,
     pub last_applied_log: RwLock<Option<LogId<NodeId>>>,
     pub snapshot: RwLock<Option<StoredSnapshot>>,
@@ -38,7 +38,7 @@ pub struct StateMachine<T: ConferRepository> {
 impl<T: ConferRepository> StateMachine<T> {
     pub fn new(repository: T) -> Self {
         StateMachine {
-            repository: RwLock::new(repository),
+            repository: Arc::new(RwLock::new(repository)),
             membership: RwLock::new(StoredMembership::default()),
             last_applied_log: RwLock::new(None),
             snapshot: RwLock::new(None),

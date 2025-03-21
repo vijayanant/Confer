@@ -1,19 +1,20 @@
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use tokio::sync::RwLock;
-use openraft::{LogId, RaftLogId, RaftTypeConfig, Vote};
+use openraft::{LogId, RaftLogId, Vote};
 use openraft::storage::{LogState, RaftLogReader, RaftLogStorage, LogFlushed};
 use openraft::StorageError;
 use std::ops::RangeBounds;
 use std::fmt::Debug;
 use openraft::OptionalSend;
 
+use crate::raft::config::{TypeConfig, NodeId, Entry};
 #[derive(Debug)]
-pub struct LogStorage<C: RaftTypeConfig> {
-    log: RwLock<BTreeMap<u64, C::Entry>>,
+pub struct LogStorage {
+    log: RwLock<BTreeMap<u64, Entry>>,
 }
 
-impl<C: RaftTypeConfig> LogStorage<C> {
+impl LogStorage {
     pub fn new() -> Self {
         Self {
             log: RwLock::new(BTreeMap::new()),
@@ -22,14 +23,14 @@ impl<C: RaftTypeConfig> LogStorage<C> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ConferLogStore<C: RaftTypeConfig> {
-    log_storage: Arc<LogStorage<C>>,
-    vote: Arc<RwLock<Option<Vote<C::NodeId>>>>,
-    committed: Arc<RwLock<Option<LogId<C::NodeId>>>>,
-    last_purged_log_id: Arc<RwLock<Option<LogId<C::NodeId>>>>,
+pub struct ConferLogStore {
+    log_storage: Arc<LogStorage>,
+    vote: Arc<RwLock<Option<Vote<NodeId>>>>,
+    committed: Arc<RwLock<Option<LogId<NodeId>>>>,
+    last_purged_log_id: Arc<RwLock<Option<LogId<NodeId>>>>,
 }
 
-impl<C: RaftTypeConfig> ConferLogStore<C> {
+impl ConferLogStore {
     pub fn new() -> Self {
         Self {
             log_storage: Arc::new(LogStorage::new()),
@@ -41,16 +42,11 @@ impl<C: RaftTypeConfig> ConferLogStore<C> {
 }
 
 
-impl<C: RaftTypeConfig>  RaftLogReader<C> for ConferLogStore<C>
-    where C::Entry: Clone
-{
+impl RaftLogReader<TypeConfig> for Arc<ConferLogStore> {
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<C::Entry>, StorageError<C::NodeId>>
-    where
-        C::Entry: Clone,
-    {
+    ) -> Result<Vec<Entry>, StorageError<NodeId>> {
 
         let log = self.log_storage.log.read().await;
 
@@ -59,12 +55,10 @@ impl<C: RaftTypeConfig>  RaftLogReader<C> for ConferLogStore<C>
     }
 }
 
-impl<C: RaftTypeConfig> RaftLogStorage<C> for ConferLogStore<C>
-    where C::Entry: Clone
-{
+impl RaftLogStorage<TypeConfig> for Arc<ConferLogStore> {
     type LogReader = Self;
 
-    async fn get_log_state(&mut self) -> Result<LogState<C>, StorageError<C::NodeId>> {
+    async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<NodeId>> {
         let log = self.log_storage.log.read().await;
         let last = log.iter().next_back().map(|(_, ent)| ent.get_log_id().clone());
 
@@ -84,26 +78,26 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for ConferLogStore<C>
         self.clone()
     }
 
-    async fn save_vote(&mut self, vote: &Vote<C::NodeId>) -> Result<(), StorageError<C::NodeId>> {
+    async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
         *self.vote.write().await = Some(vote.clone());
         Ok(())
     }
 
-    async fn read_vote(&mut self) -> Result<Option<Vote<C::NodeId>>, StorageError<C::NodeId>> {
+    async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
         Ok(self.vote.read().await.clone())
     }
 
-    async fn save_committed(&mut self, committed: Option<LogId<C::NodeId>>) -> Result<(), StorageError<C::NodeId>> {
+    async fn save_committed(&mut self, committed: Option<LogId<NodeId>>) -> Result<(), StorageError<NodeId>> {
         *self.committed.write().await = committed;
         Ok(())
     }
 
-    async fn read_committed(&mut self) -> Result<Option<LogId<C::NodeId>>, StorageError<C::NodeId>> {
+    async fn read_committed(&mut self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
         Ok(self.committed.read().await.clone())
     }
 
-    async fn append<I>(&mut self, entries: I, callback: LogFlushed<C>) -> Result<(), StorageError<C::NodeId>>
-    where I: IntoIterator<Item = C::Entry> + OptionalSend {
+    async fn append<I>(&mut self, entries: I, callback: LogFlushed<TypeConfig>) -> Result<(), StorageError<NodeId>>
+    where I: IntoIterator<Item = Entry> + OptionalSend {
         let mut log = self.log_storage.log.write().await;
         for entry in entries {
             log.insert(entry.get_log_id().index, entry);
@@ -112,7 +106,7 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for ConferLogStore<C>
         Ok(())
     }
 
-    async fn truncate(&mut self, log_id: LogId<C::NodeId>) -> Result<(), StorageError<C::NodeId>> {
+    async fn truncate(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
         let mut log = self.log_storage.log.write().await;
         let keys = log.range(log_id.index..).map(|(k, _)| k.clone()).collect::<Vec<_>>();
         for key in keys {
@@ -121,7 +115,7 @@ impl<C: RaftTypeConfig> RaftLogStorage<C> for ConferLogStore<C>
         Ok(())
     }
 
-    async fn purge(&mut self, log_id: LogId<C::NodeId>) -> Result<(), StorageError<C::NodeId>> {
+    async fn purge(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
         *self.last_purged_log_id.write().await = Some(log_id.clone());
         let mut log = self.log_storage.log.write().await;
         let keys = log.range(..=log_id.index).map(|(k, _)| k.clone()).collect::<Vec<_>>();
