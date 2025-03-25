@@ -4,6 +4,7 @@ pub mod config;
 pub mod state_machine;
 pub mod log_storage;
 pub mod network;
+pub mod raft_server;
 pub mod client_responder;
 
 //use std::sync::Arc;
