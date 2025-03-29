@@ -1,16 +1,24 @@
 use std::sync::Arc;
+use std::collections::BTreeMap;
 
 use tonic::{Request, Response, Status};
 
 use tracing::{debug, instrument, error};
 use async_trait::async_trait;
 
-use openraft::Raft;
-use crate::proto::confer::v1::confer_service_server::ConferService;
-use crate::proto::confer::v1::{Empty, ConfigPath, ConfigValue, ConfigList, SetConfigRequest};
-use crate::raft::state_machine::StateMachine;
-use crate::raft::operation::Operation;
-use crate::raft::config::TypeConfig;
+use openraft::{Raft,};
+
+use crate::proto::confer::v1::{
+    confer_service_server::ConferService,
+    Empty, ConfigPath, ConfigValue, ConfigList, SetConfigRequest,
+    InitRequest, AddLearnerRequest, ChangeMembershipRequest,
+    ClientWriteResponse, Membership, NodeIdSet, Node};
+
+use crate::raft::{
+    state_machine::StateMachine,
+    operation::Operation,
+    config:: {TypeConfig, Node as ConferNode}};
+
 use crate::repository::ConferRepository;
 
 pub struct ConferServiceImpl<CR: ConferRepository> {
@@ -139,43 +147,148 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             }
         }
     }
+
+    async fn init(
+        &self,
+        request: Request<InitRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        debug!("Initializing Raft cluster");
+        let request = request.into_inner();
+        let nodes: BTreeMap<u64, ConferNode> = request
+            .nodes
+            .into_iter()
+            .map (|node| {
+                (node.node_id, ConferNode {
+                    addr : node.addr,
+                    node_id: node.node_id,
+                    custom_data: "".to_string(),
+                })
+            })
+            .collect();
+
+        let _result = self.raft
+            .initialize(nodes)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to initialize cluster {}", e)));
+
+        debug!("Cluster initialization successful");
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn add_learner(
+        &self,
+        request: Request<AddLearnerRequest>,
+        ) -> Result<Response<ClientWriteResponse>,Status>
+    {
+        let req = request.into_inner();
+        let node = req.node.ok_or_else(|| Status::internal("Node information is required"))?;
+        debug!("Adding learner node {}", node.node_id);
+
+        let confer_node = ConferNode {
+            addr: node.addr.clone(),
+            node_id: node.node_id,
+            custom_data: "".to_string(),
+        };
+
+        let result = self
+            .raft
+            .add_learner(confer_node.node_id, confer_node, true)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to add learner node: {}", e)))?;
+
+        debug!("Successfully added learner node {}", node.node_id);
+
+        //let log_id = Some(LogId {
+            //term : result.log_id.committed_leader_id().term,
+            //index: result.log_id.index,
+        //});
+
+        if let Some(membership) = result.membership() {
+            let configs: Vec<NodeIdSet> = membership
+                .get_joint_config()
+                .into_iter()
+                .map(|m| {
+                    NodeIdSet {
+                        node_ids: m.iter().map(|key| {
+                            (*key, Empty {})
+                        }).collect()
+                    }
+                })
+                .collect();
+            let nodes = membership
+                .nodes()
+                .map(|(nid, n)| {
+                    (*nid, Node {
+                        node_id: *nid,
+                        addr:  (*n.addr).to_string(),
+                    })
+                }).collect();
+
+            let membership = Membership {
+                configs: configs,
+                nodes: nodes,
+            };
+
+            return Ok(Response::new(ClientWriteResponse {
+                membership: Some(membership)
+            }))
+        } else {
+            return Err(Status::internal(format!("membership not retrieved")))
+        }
+    }
+
+    async fn change_membership(
+        &self,
+        request: Request<ChangeMembershipRequest>,
+        ) -> Result<Response<ClientWriteResponse>, Status>
+    {
+        let req = request.into_inner();
+        debug!(
+            "Changing membership. Members: {:?}, Retain: {}",
+            req.members, req.retain
+        );
+
+        let result = self
+            .raft
+            .change_membership(req.members, req.retain)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to change membership: {}", e)))?;
+
+        if let Some(membership) = result.membership() {
+            let configs: Vec<NodeIdSet> = membership
+                .get_joint_config()
+                .into_iter()
+                .map(|m| {
+                    NodeIdSet {
+                        node_ids: m.iter().map(|key| {
+                            (*key, Empty {})
+                        }).collect()
+                    }
+                })
+                .collect();
+            let nodes = membership
+                .nodes()
+                .map(|(nid, n)| {
+                    (*nid, Node {
+                        node_id: *nid,
+                        addr:  (*n.addr).to_string(),
+                    })
+                }).collect();
+
+            let membership = Membership {
+                configs: configs,
+                nodes: nodes,
+            };
+
+            return Ok(Response::new(ClientWriteResponse {
+                membership: Some(membership)
+            }))
+        } else {
+            return Err(Status::internal(format!("membership not retrieved")))
+        }
+    }
+
 }
-
-
-// TODO: Use a trait based approach with trait `ToStatus` and  `fn to_status`
-//fn map_confer_error_to_status(error: ConferError) -> Status {
-    //let error_details = ErrorDetails {
-        //message: error.to_string(), // Use Display implementation
-    //};
-    //let encoded_details = Bytes::from(error_details.encode_to_vec());
-
-    //match error {
-        //ConferError::NotFound { .. } => {
-            //Status::with_details(Code::NotFound, "Path not found", encoded_details)
-        //}
-        //ConferError::InvalidPath { .. } => {
-            //Status::with_details(Code::InvalidArgument, "Invalid path", encoded_details)
-        //}
-        //ConferError::Internal { .. } => {
-            //Status::with_details(Code::Internal, "Internal error", encoded_details)
-        //}
-        //ConferError::RaftError { .. } => {
-            //Status::with_details(Code::Internal, "Raft error", encoded_details)
-        //}
-        //ConferError::SerializationError { .. } => {
-            //Status::with_details(Code::Internal, "Serialization error", encoded_details)
-        //}
-        //ConferError::DeserializationError { .. } => {
-            //Status::with_details(Code::Internal, "Deserialization error", encoded_details)
-        //}
-        //ConferError::StorageError { .. } => {
-            //Status::with_details(Code::Internal, "Storage error", encoded_details)
-        //}
-        //ConferError::UnknownError => {
-            //Status::with_details(Code::Internal, "Unknown error", encoded_details)
-        //}
-    //}
-//}
 
 #[cfg(test)]
 mod service_tests;

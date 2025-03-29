@@ -6,17 +6,13 @@ mod error;
 
 use clap::Parser;
 use tracing::{info, debug, error};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 use std::sync::Arc;
-use std::net::SocketAddr;
-use std::collections::BTreeMap;
-use std::ops::Deref;
 
 use tonic::transport::Server;
 
 use openraft::Raft;
-use openraft::BasicNode;
 use openraft::Config;
 use openraft::SnapshotPolicy;
 
@@ -30,11 +26,18 @@ use crate::proto::confer::v1::confer_service_server::ConferServiceServer;
 use crate::raft::proto::raft_service_server::RaftServiceServer;
 
 fn init_tracing() {
+    let app_filter = tracing_subscriber::EnvFilter::new(
+            std::env::var("APP_LOG").unwrap_or_else(|_| "server=debug".into()));
+    //let lib_filter = tracing_subscriber::EnvFilter::new(
+            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=info".into()));
+
+    let app_layer = tracing_subscriber::fmt::layer().with_filter(app_filter);
+    //let lib_layer = tracing_subscriber::fmt::layer().with_filter(lib_filter);
+
     if let Err(e) = tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "confer=debug".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
+        .with(app_layer)
+        //.with(lib_layer)
+        //.with(tracing_subscriber::fmt::layer())
         .try_init()
     {
         error!("Failed to initialize tracing: {}", e);
@@ -78,11 +81,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
     debug!("{:?}", args);
-    let mode           = &args.mode;
     let node_id        = args.node_id.parse()?;
     let server_address = args.server_address;
-    let raft_address   = args.raft_address;
-    let peers          = &args.peers;
 
     let config        = sensible_config();
     let repository    = HashMapConferRepository::new();
@@ -101,28 +101,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Raft Node created!");
 
-    //let raft = Arc::new(raft);
-
-    if mode == "new" { // Initialize the Raft cluster.
-        let mut nodes = BTreeMap::new();
-        //let server_address  = server_address.parse()?; //"http://127.0.0.1:67891".to_string();
-        nodes.insert(node_id.clone(), BasicNode { addr: "127.0.0.1:45671".to_string()});
-        nodes.insert(node_id.clone(), BasicNode { addr: "127.0.0.1:45672".to_string()});
-        raft.initialize(nodes).await.unwrap();
-        info!("Raft Node {} initialised!", node_id.clone());
-    } else {
-        error!("--- RAFT NEEDS TO BE INITIALISED ---");
-    }
-
     let raft_service = RaftServiceImpl::new(raft.clone());
     let raft_service_server = RaftServiceServer::new(raft_service);
-    //let raft_server = Server::builder()
-        //.add_service(raft_service_server.clone())
-        //.serve(raft_address)
-        //.await?;
 
-
-    let confer_service = ConferServiceImpl::new(raft, state_machine.clone());
+    let confer_service = ConferServiceImpl::new(raft.clone(), state_machine.clone());
     let confer_service_server = ConferServiceServer::new(confer_service);
     let confer_server = Server::builder()
         .add_service(confer_service_server)
@@ -135,6 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //info!("Raft runing at {}", raft_address);
 
     confer_server.await?;
+
+
+
+
 
     return Ok(())
 }
