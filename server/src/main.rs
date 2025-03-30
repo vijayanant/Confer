@@ -11,6 +11,7 @@ use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use std::sync::Arc;
 
 use tonic::transport::Server;
+use std::net::SocketAddr;
 
 use openraft::Raft;
 use openraft::Config;
@@ -29,7 +30,7 @@ fn init_tracing() {
     let app_filter = tracing_subscriber::EnvFilter::new(
             std::env::var("APP_LOG").unwrap_or_else(|_| "server=debug".into()));
     //let lib_filter = tracing_subscriber::EnvFilter::new(
-            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=info".into()));
+            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=debug".into()));
 
     let app_layer = tracing_subscriber::fmt::layer().with_filter(app_filter);
     //let lib_layer = tracing_subscriber::fmt::layer().with_filter(lib_filter);
@@ -53,25 +54,11 @@ fn init_tracing() {
     about = "Runs a node for a distributed Confer system."
 )]
 struct Args {
-    #[clap(
-        short = 'm',
-        long = "mode",
-        value_parser = clap::builder::PossibleValuesParser::new(["new", "join"]),
-        help = "Mode of operation: 'new' to start a new cluster, 'join' to join an existing cluster."
-    )]
-    mode: String,
-
-    #[clap(short = 'i', long = "id", help = "Unique ID for this node (e.g., 'node1').")]
+    #[clap(short = 'i', long = "id", help = "Unique ID for this node (e.g., '1').")]
     node_id: String,
 
     #[clap(short = 's', long = "server", help = "Address for the App to listen on (e.g., '127.0.0.1:45671').")]
     server_address: String,
-
-    #[clap(short = 'r', long = "raft", help = "Address for Raft Node to listen on (e.g., '127.0.0.1:56781').")]
-    raft_address: String,
-
-    #[clap(long = "peer", help = "Addresses of other nodes in the cluster (for 'join' mode).")]
-    peers: Vec<String>,
 }
 
 #[tokio::main]
@@ -104,22 +91,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raft_service = RaftServiceImpl::new(raft.clone());
     let raft_service_server = RaftServiceServer::new(raft_service);
 
-    let confer_service = ConferServiceImpl::new(raft.clone(), state_machine.clone());
+    let confer_service = ConferServiceImpl::new(raft, state_machine.clone());
     let confer_service_server = ConferServiceServer::new(confer_service);
     let confer_server = Server::builder()
-        .add_service(confer_service_server)
         .add_service(raft_service_server)
-        .serve(server_address.parse()?);
-
-    //println!("Confer runing at {}", server_address);
-    info!("Confer runing at {}", server_address);
-    //println!("Raft runing at {}", raft_address);
-    //info!("Raft runing at {}", raft_address);
-
-    confer_server.await?;
+        .add_service(confer_service_server);
 
 
-
+    let addr: SocketAddr = server_address.parse()?;
+    info!("Confer Server runing at {}", addr.clone().to_string());
+    confer_server.serve(addr).await?;
 
 
     return Ok(())
