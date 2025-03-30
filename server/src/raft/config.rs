@@ -1,17 +1,16 @@
 use std::fmt;
 use std::io::Cursor;
+use openraft::raft::responder::OneshotResponder;
 
 use openraft::{TokioRuntime, RaftTypeConfig, };
 use serde::{Deserialize, Serialize};
-use openraft::BasicNode;
 use crate::raft::{
-    operation:: {Operation, OperationResponse},
-    client_responder::ConferClientResponder};
+    operation:: {Operation, OperationResponse},};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord,)]
 pub struct NodeInfo {
-    pub address: String,
-    pub port: u16,
+    pub node_id: u64,
+    pub addr: String,
     pub custom_data: String,
 }
 
@@ -26,11 +25,12 @@ impl RaftTypeConfig for TypeConfig {
     type D            = Operation;
     type R            = OperationResponse;
     type NodeId       = u64;
-    type Node         = BasicNode;
+    type Node         = NodeInfo;
     type Entry        = openraft::Entry<TypeConfig>;
     type SnapshotData = Cursor<Vec<u8>>;
     type AsyncRuntime = TokioRuntime;
-    type Responder    = ConferClientResponder;
+    //type Responder    = ConferClientResponder;
+    type Responder    = OneshotResponder<TypeConfig>; //ConferClientResponder;
 }
 
 pub type NodeId = <TypeConfig as RaftTypeConfig>::NodeId;

@@ -1,10 +1,11 @@
 [package]
-name = "client"
+name = "confer-cli"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-prost = "0.13.4"
+clap = { version = "4.5.34", features = ["derive"] }
+prost = "0.13.5"
 tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
 tonic = "0.12.3"
 
