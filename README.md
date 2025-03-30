@@ -25,17 +25,21 @@ Confer is still in its early stages (think "baby steps"):
   cluster)
 * A simple API for clients to manage their config values (set, get, remove,
   list)
+* A hierarchical (path-like) namespace for keys. (Ex. `/app/config/timeout`)
 
 ## What's on the Horizon?
 
-There are lots and lots of things that can added here. But let me not get ahead
-of myself. The plan (subject to change, as learning journeys often do)
-includes:
+There are lots and lots of things that can be added here. But let me not get
+ahead of myself. Let me only add what can be done in near future. The plan
+(subject to change, as learning journeys often do) includes: 
 
 * Adding persistence (currently logs are in-memory).
+* Watch/Subscribe
 * Dynamic discovery (preferably using Confer itself!)
+* API for monitoring cluster status
+* Metadata and versioning of snapshots?
 * And, of course, lots and lots of testing!
- 
+
 ## Building and Running (Work in Progress)
 
 This project is very much a work in progress.  Building and running
@@ -62,11 +66,11 @@ now is to peek at the source code for the latest state of affairs.
 
 This should build both the server and the CLI (in the client).
 
-### Setting Up A Cluster
+## Setting Up A Cluster
 This section provides a step-by-step guide on using the Confer CLI to establish
 a basic two-node cluster.
 
-#### Start the first server (Node 1):
+### Start the first server (Node 1):
 
 ```
 ./target/debug/server --id 1 --server 127.0.0.1:10001
@@ -75,7 +79,7 @@ a basic two-node cluster.
 This command launches the Confer server, configuring it as Node 1 with the
 address _127.0.0.1:10001_.
 
-#### Start the second server (Node 2):
+### Start the second server (Node 2):
 
 ```
 ./server --id 2 --server 127.0.0.1:10002
@@ -84,9 +88,9 @@ address _127.0.0.1:10001_.
 Similarly, this starts the second Confer server instance, configured as Node 2
 with the address _127.0.0.1:10002_.
 
-#### Initialize the cluster using the CLI:
+### Initialize the cluster using the CLI:
 ```
-confer-cli --address http://127.0.0.1:10001 init --nodes 1=http://127.0.0.1:10001,2=http://127.0.0.1:10002
+./target/debug/confer-cli --address http://127.0.0.1:10001 init --nodes 1=http://127.0.0.1:10001,2=http://127.0.0.1:10002
 ```
 
 This forms the Raft cluster with two nodes.  
@@ -102,7 +106,7 @@ The CLI command can be executed from any machine that has network connectivity
 to the Confer servers. The `--address` option determines which server receives
 the initialization request. 
 
-#### Verify the cluster: 
+### Verify the cluster: 
 After the init command is executed, the Confer servers will begin the process
 of forming a Raft cluster. This involves leader election and log replication.
 Currently, the Confer CLI does not have a command to directly query the cluster
@@ -116,7 +120,7 @@ successfully established.
   your own client to set and get values and confirm.
 
 
-#### Dynamically add a learner node (Node 3):
+### Dynamically add a learner node (Node 3):
 
 Start the third server (Node 3):
 
@@ -129,7 +133,7 @@ command can be sent to either `Node 1` or `Node 2``, as they are part of the
 cluster.
 
 ``` 
-confer-cli --address http://127.0.0.1:10001 add-learner --node 3=http://127.0.0.1:10003
+./confer-cli --address http://127.0.0.1:10001 add-learner --node 3=http://127.0.0.1:10003
 ```
 
 This command instructs `Node 1` to add `Node 3` as a learner.  Node 3 will
@@ -140,7 +144,7 @@ To add Node 3 as a full member (voter) to the cluster, you would use the
 membership configuration for the cluster.
 
 ```
-confer-cli --address http://127.0.0.1:10001 change-membership --members 1,2,3
+./confer-cli --address http://127.0.0.1:10001 change-membership --members 1,2,3
 ```
 
 This command tells Node 1 to change the cluster membership to include nodes 1,
@@ -148,15 +152,15 @@ This command tells Node 1 to change the cluster membership to include nodes 1,
 
 If Node 3 was previously a learner, this command will promote it to a voter.
 
-### Contributing
+## Contributing
 As this is primarily a personal learning project, I'm not actively seeking
 contributions at this time. However, if you find something interesting or have
 suggestions, feel free to open an issue.
 
-### License
+## License
 MIT License
 
-### Disclaimer
+## Disclaimer
 This project is a work in progress and is subject to change or discontinuation
 at any time.  It's provided as-is, without any warranty. Use at your own risk.
 
