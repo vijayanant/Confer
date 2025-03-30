@@ -1,49 +1,76 @@
 mod proto;
-//mod service;
+mod service;
 mod repository;
 mod raft;
 mod error;
 
-use tonic::transport::Server;
-use tracing::{info, error};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::proto::confer::v1::confer_service_server::ConferServiceServer;
-//use crate::service::ConferServiceImpl;
+use clap::Parser;
+use tracing::{info, debug, error};
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 use std::sync::Arc;
+
+use tonic::transport::Server;
+use std::net::SocketAddr;
+
 use openraft::Raft;
 use openraft::Config;
 use openraft::SnapshotPolicy;
-use crate::repository::ConferRepository;
+
 use crate::repository::HashMapConferRepository;
-use crate::raft::config::{TypeConfig, NodeId};
+use crate::service::ConferServiceImpl;
 use crate::raft::state_machine::StateMachine;
 use crate::raft::log_storage::ConferLogStore;
 use crate::raft::network::NetworkFactory;
-
-use crate::raft::operation::{Operation, OperationResponse};
-use crate::proto::confer::v1::{ConfigPath, ConfigValue};
-use openraft::BasicNode;
-use std::collections::BTreeMap;
+use crate::raft::raft_server::RaftServiceImpl;
+use crate::proto::confer::v1::confer_service_server::ConferServiceServer;
+use crate::raft::proto::raft_service_server::RaftServiceServer;
 
 fn init_tracing() {
+    let app_filter = tracing_subscriber::EnvFilter::new(
+            std::env::var("APP_LOG").unwrap_or_else(|_| "server=debug".into()));
+    //let lib_filter = tracing_subscriber::EnvFilter::new(
+            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=debug".into()));
+
+    let app_layer = tracing_subscriber::fmt::layer().with_filter(app_filter);
+    //let lib_layer = tracing_subscriber::fmt::layer().with_filter(lib_filter);
+
     if let Err(e) = tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "confer=debug".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
+        .with(app_layer)
+        //.with(lib_layer)
+        //.with(tracing_subscriber::fmt::layer())
         .try_init()
     {
         error!("Failed to initialize tracing: {}", e);
     }
 }
 
+
+#[derive(Parser, Debug)]
+#[clap(
+    name = "Raft Node",
+    version = "0.1.0",
+    author = "Your Name",
+    about = "Runs a node for a distributed Confer system."
+)]
+struct Args {
+    #[clap(short = 'i', long = "id", help = "Unique ID for this node (e.g., '1').")]
+    node_id: String,
+
+    #[clap(short = 's', long = "server", help = "Address for the App to listen on (e.g., '127.0.0.1:45671').")]
+    server_address: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
     init_tracing();
 
-    let node_id: NodeId  = 1;
+    let args = Args::parse();
+    debug!("{:?}", args);
+    let node_id        = args.node_id.parse()?;
+    let server_address = args.server_address;
+
     let config        = sensible_config();
     let repository    = HashMapConferRepository::new();
     let state_machine = Arc::new(StateMachine::new(repository));
@@ -59,60 +86,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state_machine.clone()
     ).await.unwrap();
 
-    // Initialize the Raft node.
-    let mut nodes = BTreeMap::new();
-    let address = "http://127.0.0.1:67891".to_string();
-    nodes.insert(node_id, BasicNode { addr: address.clone(),});
-    raft.initialize(nodes).await.unwrap();
+    info!("Raft Node created!");
 
-    // Simulate a client request (sending an Operation).
-    let set_operation = Operation::Set {
-        path: ConfigPath { path: "key1".to_string() },
-        value: ConfigValue { value: "value1".as_bytes().to_vec() },
-    };
+    let raft_service = RaftServiceImpl::new(raft.clone());
+    let raft_service_server = RaftServiceServer::new(raft_service);
 
-    //serialise the operation as a command
-    let set_command = serde_json::to_vec(&set_operation).unwrap();
-
-    tracing::info!("Sending command: {:?}", set_operation);
-    let set_client_result = raft.client_write(set_operation.clone()).await;
-
-    match set_client_result {
-        Ok(response) => {
-            tracing::info!("SET Command succeeded: {:?}", response);
-        }
-        Err(err) => {
-            tracing::error!("SET Command failed: {:?}", err);
-        }
-    }
-
-    // Directly get the value from the state machine.
-    let path = ConfigPath { path: "key1".to_string() };
-    let repo = state_machine.repository.read().await;
-    let retrieved_value_option = repo.get(&path).await;
-
-    match retrieved_value_option {
-        Ok(config_value) => {
-            let retrieved_value = String::from_utf8(config_value).unwrap();
-            tracing::info!("Retrieved value: {}", retrieved_value);
-            assert_eq!(retrieved_value, "value1"); // Verify the value.
-            tracing::info!("Value verification successful!");
-        }
-        Err(err) => {
-            tracing::error!("Error retrieving value: {:?}", err);
-            return Err(err)?;
-        }
-    };
+    let confer_service = ConferServiceImpl::new(raft, state_machine.clone());
+    let confer_service_server = ConferServiceServer::new(confer_service);
+    let confer_server = Server::builder()
+        .add_service(raft_service_server)
+        .add_service(confer_service_server);
 
 
-    Ok(())
+    let addr: SocketAddr = server_address.parse()?;
+    info!("Confer Server runing at {}", addr.clone().to_string());
+    confer_server.serve(addr).await?;
+
+
+    return Ok(())
 }
 
 fn sensible_config() -> Arc<Config> {
     let mut config = Config::default();
-    config.election_timeout_min = 1000;
-    config.election_timeout_max = 1500;
-    config.heartbeat_interval = 500;
+    config.election_timeout_min = 6000;
+    config.election_timeout_max = 7500;
+    config.heartbeat_interval = 3000;
     config.snapshot_policy = SnapshotPolicy::LogsSinceLast(500);
     config.cluster_name = "confer_cluster".to_string();
     Arc::new(config)
