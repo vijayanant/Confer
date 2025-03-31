@@ -1,5 +1,5 @@
 [package]
-name = "server"
+name = "confer-server"
 version = "0.1.0"
 edition = "2021"
 authors = ["Vijay Anant<vijay.anantharamaiah@gmail.com.com>"]

@@ -1,0 +1,8 @@
+[package]
+name = "confer-client-example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = "1.44.1"
+confer-client = { path = "../client" }

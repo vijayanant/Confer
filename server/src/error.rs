@@ -2,12 +2,7 @@ use thiserror::Error;
 
 use openraft::error::RaftError;
 
-use openraft::RaftTypeConfig;
-use crate::raft::config::TypeConfig;
-
-pub type MyNodeId = <TypeConfig as RaftTypeConfig>::NodeId;
-pub type MyNode = <TypeConfig as RaftTypeConfig>::Node;
-
+use crate::raft::config::NodeId;
 
 #[derive(Error, Default, Debug)]
 pub enum ConferError {
@@ -46,8 +41,8 @@ impl From<std::io::Error> for ConferError {
     }
 }
 
-impl From<RaftError<MyNodeId>> for ConferError {
-    fn from(err: RaftError<MyNodeId>) -> Self {
+impl From<RaftError<NodeId>> for ConferError {
+    fn from(err: RaftError<NodeId>) -> Self {
         ConferError::RaftError {
             message: format!("Raft Error: {}", err.to_string()),
         }

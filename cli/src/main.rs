@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use tonic::transport::Channel;
-use tonic::{Request, Status};
+use tonic::Request;
 
 // Include the generated gRPC client code.  Make sure
 // the path is correct for your project structure.
@@ -12,7 +12,7 @@ pub mod confer {
 
 use confer::v1::{
     confer_service_client::ConferServiceClient,
-    AddLearnerRequest, ChangeMembershipRequest, ConfigPath, InitRequest, Node,
+    AddLearnerRequest, ChangeMembershipRequest, InitRequest, Node,
 };
 
 #[derive(Parser)]

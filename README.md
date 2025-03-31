@@ -1,12 +1,13 @@
 # Confer: A Distributed Configuration Manager
 
-*Conf(ig Manag)er* is a distributed configuration manager inspired by ZooKeeper and etcd.
-It uses the Raft consensus algorithm to provide a reliable and consistent way
-to store and distribute configuration data.
+*Confer* is a distributed configuration manager. It uses the Raft consensus
+algorithm to provide a reliable and consistent way to store and distribute
+configuration data.
+
+Confer is in its early stages of development; you are welcome to
+[contribute](#contributing).
 
 ## What's Available Now?
-
-Confer is in its early stages of development:
 
 - Cluster set-up.
 - CLI tool to manage the cluster.
@@ -137,6 +138,34 @@ This command tells Node 1 to change the cluster membership to include nodes 1,
 2, and 3 as voters.  Node 3 will participate in voting.
 
 If Node 3 was previously a learner, this command will promote it to a voter.
+
+## Confer Client Library/SDK
+
+### Rust
+
+The Confer Rust client library allows Rust applications to interact with a Confer server.
+
+#### Usage
+
+```rust
+use confer_client::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = connect("http://[::1]:10001".to_string()).await?;
+    set_value(&mut client, "my-key".to_string(), "my-value".as_bytes().to_vec()).await?;
+    let value = get_value(&mut client, "my-key".to_string()).await?;
+    println!("Value: {:?}", value);
+    Ok(())
+}
+```
+
+**TODO**
+
+- Include a complete, runnable example.
+- Show how to handle errors.
+- Publish to crates.io, include the crate version.
+
 
 ## Contributing
 Confer is an open-source project, and contributions are welcome!  If you find
