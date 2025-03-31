@@ -1,44 +1,30 @@
 # Confer: A Distributed Configuration Manager
 
-*Confer* is a personal learning project focused on the Raft consensus
-algorithm. This project aims to provide a hands-on experience with Rust and
-gRPC. Inspired by ZooKeeper and etcd, *Confer* serves as a
-platform for my experimentation and deeper understanding of related technologies.
-
-## What's the Goal?
-
-The primary goal of Confer is to help me learn Rust and Raft. Think of it as my
-digital sandbox where I can experiment with: 
-
-* Rust: Sharpening my Rust skills and exploring its features.
-* gRPC: Learning how to build efficient communication channels between services
-  (using `tokio`).
-* Raft: Demystifying the Raft consensus algorithm and implementing a raft based
-  consensus in Rust (using `openraft`).
+*Conf(ig Manag)er* is a distributed configuration manager inspired by ZooKeeper and etcd.
+It uses the Raft consensus algorithm to provide a reliable and consistent way
+to store and distribute configuration data.
 
 ## What's Available Now?
 
-Confer is still in its early stages (think "baby steps"):
+Confer is in its early stages of development:
 
-* We have a functioning raft based cluster set-up
-* A simple CLI tool to manage the cluster (adding and/or removing nodes from a
-  cluster)
-* A simple API for clients to manage their config values (set, get, remove,
-  list)
-* A hierarchical (path-like) namespace for keys. (Ex. `/app/config/timeout`)
+- Cluster set-up.
+- CLI tool to manage the cluster.
+- API for clients to manage  configurations.
+- A hierarchical (path-like) namespace for keys. (Ex. `/app/config/timeout`)
 
 ## What's on the Horizon?
 
 There are lots and lots of things that can be added here. But let me not get
 ahead of myself. Let me only add what can be done in near future. The plan
-(subject to change, as learning journeys often do) includes: 
+includes: 
 
-* Adding persistence (currently logs are in-memory).
-* Watch/Subscribe
-* Dynamic discovery (preferably using Confer itself!)
-* API for monitoring cluster status
-* Metadata and versioning of snapshots?
-* And, of course, lots and lots of testing!
+- Adding persistence (currently logs are in-memory).
+- Watch/Subscribe
+- Dynamic discovery (preferably using Confer itself!)
+- API for monitoring cluster status
+- Metadata and versioning of snapshots?
+- And, of course, lots and lots of testing!
 
 ## Building and Running (Work in Progress)
 
@@ -48,8 +34,8 @@ now is to peek at the source code for the latest state of affairs.
 
 ### Prerequisites
 
-*   Rust and Cargo
-*   Protobuf compiler
+- Rust and Cargo
+- Protobuf compiler
 
 ### Building
 
@@ -95,11 +81,11 @@ with the address _127.0.0.1:10002_.
 
 This forms the Raft cluster with two nodes.  
 
-* `--address` specifies that the CLI should send the init command to the Confer
+- `--address` specifies that the CLI should send the init command to the Confer
   server running as Node 1.  This server will coordinate the cluster
 initialization. 
-* `init` invokes the init command. 
-* `--nodes` provides the list of nodes that should be part of the initial
+- `init` invokes the init command. 
+- `--nodes` provides the list of nodes that should be part of the initial
   cluster configuration.
 
 The CLI command can be executed from any machine that has network connectivity
@@ -107,16 +93,16 @@ to the Confer servers. The `--address` option determines which server receives
 the initialization request. 
 
 ### Verify the cluster: 
-After the init command is executed, the Confer servers will begin the process
+After the `init` command is executed, the Confer servers will begin the process
 of forming a Raft cluster. This involves leader election and log replication.
 Currently, the Confer CLI does not have a command to directly query the cluster
 status. You will need to use other methods to verify that the cluster has been
 successfully established. 
 
-* Examine the log output of both Node 1 and Node 2. Look for messages
+- Examine the log output of both Node 1 and Node 2. Look for messages
   indicating successful leader election, node joining, and log replication.
 
-* Custom gRPC calls: There is no test client written, you will have to write
+- Custom gRPC calls: There is no test client written, you will have to write
   your own client to set and get values and confirm.
 
 
@@ -153,14 +139,25 @@ This command tells Node 1 to change the cluster membership to include nodes 1,
 If Node 3 was previously a learner, this command will promote it to a voter.
 
 ## Contributing
-As this is primarily a personal learning project, I'm not actively seeking
-contributions at this time. However, if you find something interesting or have
-suggestions, feel free to open an issue.
+Confer is an open-source project, and contributions are welcome!  If you find
+something interesting or have suggestions, feel free to open an issue or better
+send us a pull request.
+
+If you'd like to contribute, please follow these guidelines:
+
+- **Fork the repository:** Start by creating your own fork of the Confer
+repository on GitHub.
+
+- **Create a branch:** Create a new branch in your fork for the feature or bug
+fix you're working on.
+
+- **Make your changes:** Implement your changes, ensuring that they adhere to
+the project's coding style and include appropriate tests.
+
+- **Submit a pull request:** Once you're satisfied with your changes, submit a
+pull request to the main Confer repository.
+
+We appreciate your contributions!
 
 ## License
 MIT License
-
-## Disclaimer
-This project is a work in progress and is subject to change or discontinuation
-at any time.  It's provided as-is, without any warranty. Use at your own risk.
-
