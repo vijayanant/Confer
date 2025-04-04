@@ -28,9 +28,9 @@ use crate::raft::proto::raft_service_server::RaftServiceServer;
 
 fn init_tracing() {
     let app_filter = tracing_subscriber::EnvFilter::new(
-            std::env::var("APP_LOG").unwrap_or_else(|_| "server=debug".into()));
+            std::env::var("APP_LOG").unwrap_or_else(|_| "confer-server=info".into()));
     //let lib_filter = tracing_subscriber::EnvFilter::new(
-            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=debug".into()));
+            //std::env::var("LIB_LOG").unwrap_or_else(|_| "openraft=info".into()));
 
     let app_layer = tracing_subscriber::fmt::layer().with_filter(app_filter);
     //let lib_layer = tracing_subscriber::fmt::layer().with_filter(lib_filter);
