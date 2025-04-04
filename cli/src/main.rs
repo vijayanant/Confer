@@ -20,7 +20,7 @@ use confer::v1::{
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
-    #[clap(long, default_value = "http://[::1]:45671")]
+    #[clap(long, default_value = "http://[::1]:10001")]
     address: String,
 }
 
@@ -29,7 +29,7 @@ enum Commands {
     /// Initializes a new Raft cluster.
     Init {
         /// List of node addresses in the format "node_id=address" (e.g., "1=http://localhost:10001,2=http://localhost:10002")
-        #[clap(required = true, value_parser = parse_node_address)]
+        #[clap(required = true, value_parser = parse_node_address, num_args = 1..)]
         nodes: Vec<(u64, String)>,
     },
     /// Adds a learner node to the Raft cluster.
@@ -41,7 +41,7 @@ enum Commands {
     /// Changes the membership of the Raft cluster.
     ChangeMembership {
         /// List of voter node IDs (e.g., "1,2,3")
-        #[clap(required = true, value_parser = parse_node_ids)]
+        #[clap(required = true, value_parser = parse_node_ids, num_args = 1..)]
         members: Vec<u64>,
         /// Whether to retain existing configuration
         #[clap(long)]
@@ -49,7 +49,7 @@ enum Commands {
     },
 }
 
-// Custom parser for node addresses
+// Custom parser for a single node address
 fn parse_node_address(s: &str) -> Result<(u64, String), String> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
     if parts.len() != 2 {
@@ -64,13 +64,8 @@ fn parse_node_address(s: &str) -> Result<(u64, String), String> {
 }
 
 // Custom parser for comma-separated node IDs
-fn parse_node_ids(s: &str) -> Result<Vec<u64>, String> {
-    s.split(',')
-        .map(|id| {
-            id.parse::<u64>()
-                .map_err(|e| format!("Invalid node ID: {}", e))
-        })
-        .collect()
+fn parse_node_ids(s: &str) -> Result<u64, String> {
+    s.parse::<u64>().map_err(|e| format!("Invalid node ID: {}", e))
 }
 
 #[tokio::main]
@@ -87,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Init { nodes } => {
+            println!("Init nodes: {:?}", nodes.clone());
             let nodes_proto: Vec<Node> = nodes
                 .into_iter()
                 .map(|(node_id, addr)| Node { node_id, addr })

@@ -2,13 +2,16 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 
 use tonic::{Request, Response, Status};
+use tonic::transport::Channel;
 
-use tracing::{debug, instrument, error};
+use tracing::{info, debug, instrument, error};
 use async_trait::async_trait;
 
-use openraft::{Raft,};
+use openraft::Raft;
+use openraft::error::{RaftError, ClientWriteError::ForwardToLeader};
 
 use crate::proto::confer::v1::{
+    confer_service_client::ConferServiceClient,
     confer_service_server::ConferService,
     Empty, ConfigPath, ConfigValue, ConfigList, SetConfigRequest,
     InitRequest, AddLearnerRequest, ChangeMembershipRequest,
@@ -64,7 +67,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         let path = config_path.path.clone().ok_or_else(|| Status::invalid_argument("Path is required"))?;
         let value = config_path.value.clone().ok_or_else(|| Status::invalid_argument("Value is required"))?;
 
-        debug!("Received set request for path: {:?}", &path);
+        info!("Received set request for path: {:?}", &path);
         if path.path.is_empty() {
             error!("Path can not be empty: {:?}", &config_path);
             return Err(Status::invalid_argument("Path cannot be empty"));
@@ -75,20 +78,39 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             value: value.clone(),
         };
 
-        //serialise the operation as a command
-        //let set_command = serde_json::to_vec(&set_operation).unwrap();
-
         debug!("Sending request to raft: {:?}", set_operation);
         let result = self.raft.client_write(set_operation.clone()).await;
 
         match result {
             Ok(_reponse) => {
-                debug!("Successfully set value for path: {:?}", &path);
+                info!("Successfully set value for path: {:?}", &path);
                 Ok(Response::new(Empty {}))
             }
-            Err(error) => {
-                error!("Error setting value: {:?}", error);
-                Err(Status::internal(format!("Failed to Set {:?}. details: {:?}", path, error.to_string())))
+            Err(error) => match error {
+                RaftError::APIError(ForwardToLeader(leader)) => {
+                    if let Some(node) = leader.leader_node {
+                        info!("Forwarding Set request to leader: {:?}", node);
+                        let channel = Channel::from_shared(node.addr.clone())
+                            .map_err(|e| Status::invalid_argument(format!("Failed to create channel: {}", e)))?
+                            .connect()
+                            .await
+                            .map_err(|e| Status::unavailable(format!("Failed to connect to leader: {}", e)))?;
+
+                        let mut client  = ConferServiceClient::new(channel);
+                        let res = client.set(Request::new(SetConfigRequest{
+                            path: Some(path),
+                            value: Some(value)
+                        })).await?;
+                        Ok(res)
+                    } else {
+                        error!("Failed to forward. Leader not known: {:?}", leader);
+                        Err(Status::internal(format!("Failed to forward. Leader not known: {}", leader)))
+                    }
+                }
+                e => {
+                    error!("Error setting value: {:?}", e);
+                    Err(Status::internal(format!("Failed to Set {:?}. details: {:?}", path, e.to_string())))
+                }
             }
         }
     }
@@ -97,7 +119,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
     async fn remove(&self, request: Request<ConfigPath>) -> Result<Response<Empty>, Status> {
         let config_path = request.into_inner();
 
-        debug!("Received remove request for path: {:?}", &config_path);
+        info!("Received remove request for path: {:?}", &config_path);
         if config_path.path.is_empty() {
             return Err(Status::invalid_argument("Path cannot be empty"));
         }
@@ -106,20 +128,36 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             path: config_path.clone(),
         };
 
-        //serialise the operation as a command
-        //let remove_command = serde_json::to_vec(&remove_operation).unwrap();
-
         debug!("Sending request to raft: {:?}", remove_operation);
         let result = self.raft.client_write(remove_operation.clone()).await;
 
         match result {
             Ok(_response) => {
-                debug!("Successfully removed value for path: {:?}", &config_path);
+                info!("Successfully removed value for path: {:?}", &config_path);
                 Ok(Response::new(Empty {}))
             }
-            Err(error) => {
-                error!("Error removing value: {:?}", error);
-                Err(Status::internal(format!("Failed to remove {:?}. details: {:?}", config_path.path, error.to_string())))
+            Err(error) => match error {
+                RaftError::APIError(ForwardToLeader(leader)) => {
+                    if let Some(node) = leader.leader_node {
+                        info!("Forwarding Remove request to leader: {:?}", node);
+                        let channel = Channel::from_shared(node.addr.clone())
+                            .map_err(|e| Status::invalid_argument(format!("Failed to create channel: {}", e)))?
+                            .connect()
+                            .await
+                            .map_err(|e| Status::unavailable(format!("Failed to connect to leader: {}", e)))?;
+
+                        let mut client  = ConferServiceClient::new(channel);
+                        let res = client.remove(Request::new(config_path)).await?;
+                        Ok(res)
+                    } else {
+                        error!("Failed to forward. Leader not known: {:?}", leader);
+                        Err(Status::internal(format!("Failed to forward. Leader not known: {}", leader)))
+                    }
+                }
+                e => {
+                    error!("Error removing value: {:?}", e);
+                    Err(Status::internal(format!("Failed to remove {:?}. details: {:?}", config_path.path, e.to_string())))
+                }
             }
         }
     }
