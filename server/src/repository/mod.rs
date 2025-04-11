@@ -1,10 +1,10 @@
 pub mod hashmap;
 pub use hashmap::HashMapConferRepository;
 
-use serde::{Serialize, Deserialize};
-use async_trait::async_trait;
-use crate::proto::confer::v1::ConfigPath;
 use crate::error::ConferError;
+use crate::proto::confer::v1::ConfigPath;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 #[async_trait]
 pub trait ConferRepository: Serialize + Deserialize<'static> + Send + Sync + 'static {
@@ -18,4 +18,3 @@ pub trait ConferRepository: Serialize + Deserialize<'static> + Send + Sync + 'st
 
 #[cfg(test)]
 pub mod hashmap_tests;
-

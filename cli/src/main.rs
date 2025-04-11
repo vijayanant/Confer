@@ -11,12 +11,16 @@ pub mod confer {
 }
 
 use confer::v1::{
-    confer_service_client::ConferServiceClient,
-    AddLearnerRequest, ChangeMembershipRequest, InitRequest, Node,
+    confer_service_client::ConferServiceClient, AddLearnerRequest, ChangeMembershipRequest,
+    InitRequest, Node,
 };
 
 #[derive(Parser)]
-#[clap(version = "1.0", author = "Your Name", about = "CLI for Confer App (Cluster Management)")]
+#[clap(
+    version = "1.0",
+    author = "Your Name",
+    about = "CLI for Confer App (Cluster Management)"
+)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -65,7 +69,8 @@ fn parse_node_address(s: &str) -> Result<(u64, String), String> {
 
 // Custom parser for comma-separated node IDs
 fn parse_node_ids(s: &str) -> Result<u64, String> {
-    s.parse::<u64>().map_err(|e| format!("Invalid node ID: {}", e))
+    s.parse::<u64>()
+        .map_err(|e| format!("Invalid node ID: {}", e))
 }
 
 #[tokio::main]
@@ -96,15 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 node_id: node.0,
                 addr: node.1,
             };
-            let request = Request::new(AddLearnerRequest { node: Some(node_proto) });
+            let request = Request::new(AddLearnerRequest {
+                node: Some(node_proto),
+            });
             let response = client.add_learner(request).await?;
             println!("Learner added: {:?}", response.into_inner());
         }
         Commands::ChangeMembership { members, retain } => {
-            let request = Request::new(ChangeMembershipRequest {
-                members,
-                retain,
-            });
+            let request = Request::new(ChangeMembershipRequest { members, retain });
             let response = client.change_membership(request).await?;
             println!("Membership changed: {:?}", response.into_inner());
         }

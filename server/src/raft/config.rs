@@ -1,13 +1,12 @@
+use openraft::raft::responder::OneshotResponder;
 use std::fmt;
 use std::io::Cursor;
-use openraft::raft::responder::OneshotResponder;
 
-use openraft::{TokioRuntime, RaftTypeConfig, };
+use crate::raft::operation::{Operation, OperationResponse};
+use openraft::{RaftTypeConfig, TokioRuntime};
 use serde::{Deserialize, Serialize};
-use crate::raft::{
-    operation:: {Operation, OperationResponse},};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord,)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct NodeInfo {
     pub node_id: u64,
     pub addr: String,
@@ -15,28 +14,25 @@ pub struct NodeInfo {
 }
 
 #[derive(
-    Copy, Clone, Debug,
-    Serialize, Deserialize,
-    PartialEq, Eq, Default, PartialOrd, Ord,
-    Hash)]
+    Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord, Hash,
+)]
 pub struct TypeConfig {}
 
 impl RaftTypeConfig for TypeConfig {
-    type D            = Operation;
-    type R            = OperationResponse;
-    type NodeId       = u64;
-    type Node         = NodeInfo;
-    type Entry        = openraft::Entry<TypeConfig>;
+    type D = Operation;
+    type R = OperationResponse;
+    type NodeId = u64;
+    type Node = NodeInfo;
+    type Entry = openraft::Entry<TypeConfig>;
     type SnapshotData = Cursor<Vec<u8>>;
     type AsyncRuntime = TokioRuntime;
     //type Responder    = ConferClientResponder;
-    type Responder    = OneshotResponder<TypeConfig>; //ConferClientResponder;
+    type Responder = OneshotResponder<TypeConfig>; //ConferClientResponder;
 }
 
 pub type NodeId = <TypeConfig as RaftTypeConfig>::NodeId;
 pub type Node = <TypeConfig as RaftTypeConfig>::Node;
 pub type Entry = <TypeConfig as RaftTypeConfig>::Entry;
-
 
 // TypeConfig struct is used as a generic parameter in the InstallSnapshotError
 // type. It  has  implement the std::fmt::Display trait, which is required for

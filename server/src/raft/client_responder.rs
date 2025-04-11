@@ -1,7 +1,7 @@
-use openraft::raft::{ClientWriteResult, responder::Responder,};
+use openraft::raft::{responder::Responder, ClientWriteResult};
 use tokio::sync::oneshot;
 
-use crate::raft::{operation, config::TypeConfig};
+use crate::raft::{config::TypeConfig, operation};
 
 pub struct ConferClientResponder {
     sender: oneshot::Sender<ClientWriteResult<TypeConfig>>,
@@ -10,7 +10,9 @@ pub struct ConferClientResponder {
 impl Responder<TypeConfig> for ConferClientResponder {
     type Receiver = oneshot::Receiver<ClientWriteResult<TypeConfig>>;
 
-    fn from_app_data(app_data: operation::Operation) -> (operation::Operation, Self, Self::Receiver) {
+    fn from_app_data(
+        app_data: operation::Operation,
+    ) -> (operation::Operation, Self, Self::Receiver) {
         let (sender, receiver) = oneshot::channel();
         let responder = ConferClientResponder { sender };
         (app_data, responder, receiver)

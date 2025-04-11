@@ -1,10 +1,15 @@
-use serde::{Deserialize, Serialize};
 use crate::proto::confer::v1::{ConfigPath, ConfigValue};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Operation {
-    Set { path: ConfigPath, value: ConfigValue },
-    Remove { path: ConfigPath },
+    Set {
+        path: ConfigPath,
+        value: ConfigValue,
+    },
+    Remove {
+        path: ConfigPath,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,4 +31,3 @@ pub enum OperationResponse {
 
 //impl openraft::AppData for Operation {}
 //impl openraft::AppDataResponse for OperationResponse {}
-

@@ -1,5 +1,5 @@
-use std::fmt;
 use http::uri::InvalidUri;
+use std::fmt;
 use tonic::Status;
 
 #[derive(Debug)]
@@ -20,7 +20,6 @@ impl fmt::Display for ClientError {
 }
 
 impl std::error::Error for ClientError {}
-
 
 impl From<tonic::transport::Error> for ClientError {
     fn from(e: tonic::transport::Error) -> Self {

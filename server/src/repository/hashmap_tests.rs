@@ -8,7 +8,9 @@ fn setup_repository() -> HashMapConferRepository {
 #[tokio::test]
 async fn test_set_get() {
     let repository = setup_repository();
-    let path = ConfigPath { path: "test/key".to_string() };
+    let path = ConfigPath {
+        path: "test/key".to_string(),
+    };
     let value = b"test_value".to_vec();
 
     repository.set(&path, value.clone()).await.unwrap();
@@ -20,7 +22,9 @@ async fn test_set_get() {
 #[tokio::test]
 async fn test_get_not_found() {
     let repository = setup_repository();
-    let path = ConfigPath { path: "nonexistent/key".to_string() };
+    let path = ConfigPath {
+        path: "nonexistent/key".to_string(),
+    };
 
     let result = repository.get(&path).await;
 
@@ -30,7 +34,9 @@ async fn test_get_not_found() {
 #[tokio::test]
 async fn test_remove() {
     let repository = setup_repository();
-    let path = ConfigPath { path: "test/key".to_string() };
+    let path = ConfigPath {
+        path: "test/key".to_string(),
+    };
     let value = b"test_value".to_vec();
 
     repository.set(&path, value).await.unwrap();
@@ -43,14 +49,23 @@ async fn test_remove() {
 #[tokio::test]
 async fn test_list() {
     let repository = setup_repository();
-    let path1 = ConfigPath { path: "test/key1".to_string() };
-    let path2 = ConfigPath { path: "test/key2".to_string() };
+    let path1 = ConfigPath {
+        path: "test/key1".to_string(),
+    };
+    let path2 = ConfigPath {
+        path: "test/key2".to_string(),
+    };
     let value = b"test_value".to_vec();
 
     repository.set(&path1, value.clone()).await.unwrap();
     repository.set(&path2, value).await.unwrap();
 
-    let mut list = repository.list(&ConfigPath { path: "test".to_string() }).await.unwrap();
+    let mut list = repository
+        .list(&ConfigPath {
+            path: "test".to_string(),
+        })
+        .await
+        .unwrap();
     list.sort();
 
     assert_eq!(list, vec!["test/key1".to_string(), "test/key2".to_string()]);
@@ -59,7 +74,9 @@ async fn test_list() {
 #[tokio::test]
 async fn test_set_get_raw_bytes() {
     let repository = setup_repository();
-    let path = ConfigPath { path: "test/raw_bytes".to_string() };
+    let path = ConfigPath {
+        path: "test/raw_bytes".to_string(),
+    };
     let raw_bytes = vec![1, 2, 3];
 
     repository.set(&path, raw_bytes.clone()).await.unwrap();
