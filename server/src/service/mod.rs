@@ -20,6 +20,7 @@ use crate::raft::{
     config::{Node as ConferNode, TypeConfig},
     operation::Operation,
     state_machine::StateMachine,
+    network::NetworkFactory,
 };
 
 use crate::repository::ConferRepository;
@@ -31,6 +32,7 @@ use crate::repository::ConferRepository;
 pub struct ConferServiceImpl<CR: ConferRepository> {
     raft: Raft<TypeConfig>,
     state: Arc<StateMachine<CR>>,
+    network: Arc<NetworkFactory>,
 }
 
 impl<R: ConferRepository> ConferServiceImpl<R> {
@@ -45,9 +47,11 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
     ///     -  The state machine is responsible for applying the configuration changes
     ///        to the underlying data store (the repository).  It also handles
     ///        reading data from the store.
-    pub fn new(raft: Raft<TypeConfig>, state: Arc<StateMachine<R>>) -> Self {
+    pub fn new(
+        raft: Raft<TypeConfig>, state: Arc<StateMachine<R>>, network: Arc<NetworkFactory>) -> Self
+    {
         debug!("Creating new ConferServiceImpl");
-        ConferServiceImpl { raft, state }
+        ConferServiceImpl { raft, state, network }
     }
 }
 
@@ -484,12 +488,28 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         // parameter is used to control whether to use joint consensus.
         let result = self
             .raft
-            .change_membership(req.members, req.retain) // Change membership.
+            .change_membership(req.members.clone(), req.retain) // Change membership.
             .await
             .map_err(|e| {
                 error!("Failed to change membership: {:?}", e);
                 Status::internal(format!("Failed to change membership: {}", e))
             })?;
+
+        let network_factory = self.network.clone();
+        let current_members: Vec<u64> = self.raft.metrics().borrow().clone()
+            .membership_config.membership()
+            .nodes()
+            .map(|(id, _)| *id)
+            .collect(); // Get node IDs from metrics
+
+        tokio::spawn(async move {
+            for member_id in current_members {
+                if !req.members.contains(&member_id) { // Check directly
+                    network_factory.remove_client(member_id);
+                    info!("Removed cached grpc client for node {}", member_id);
+                }
+            }
+        });
 
         // Construct the response, which includes the new membership
         // information.

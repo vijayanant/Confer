@@ -121,7 +121,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raft_service = RaftServiceImpl::new(raft.clone());
     let raft_service_server = RaftServiceServer::new(raft_service);
 
-    let confer_service = ConferServiceImpl::new(raft, state_machine.clone());
+    let confer_service = ConferServiceImpl::new(
+        raft,
+        state_machine.clone(),
+        network.clone()
+        );
     let confer_service_server = ConferServiceServer::new(confer_service);
     let confer_server = Server::builder()
         .add_service(raft_service_server)
