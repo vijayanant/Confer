@@ -379,7 +379,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
 
         // Extract the node information from the request.  If the node
         // information is missing, return an error.
-        let node = req.node.ok_or_else(|| {
+        let node = req.node.clone().ok_or_else(|| {
             error!("Node information is required for AddLearnerRequest");
             Status::internal("Node information is required")
         })?;
@@ -388,7 +388,6 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         // Convert the node information into a ConferNode instance, which
         // is used by the Raft::add_learner method.
         let confer_node = ConferNode {
-            // Convert to ConferNode.
             addr: node.addr.clone(),
             node_id: node.node_id,
             custom_data: "".to_string(),
@@ -398,63 +397,81 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         // entries from the leader but do not participate in voting.
         let result = self
             .raft
-            .add_learner(confer_node.node_id, confer_node, true) // Add learner.
-            .await
-            .map_err(|e| {
-                error!("Failed to add learner node: {:?}", e);
-                Status::internal(format!("Failed to add learner node: {}", e))
-            })?;
+            .add_learner(confer_node.node_id, confer_node, true)
+            .await;
 
-        info!("Successfully added learner node {}", node.node_id);
+        match result {
+            Ok(response) => {
+                info!("Successfully added learner node {}", node.node_id);
+                // Construct the response, which includes the updated membership
+                // information.  This allows the caller to see the effect of the
+                // add_learner operation on the cluster's configuration.
+                if let Some(membership) = response.membership() {
+                    let configs: Vec<NodeIdSet> = membership
+                        .get_joint_config()
+                        .iter()
+                        .map(|m| NodeIdSet {
+                            node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
+                        })
+                        .collect();
+                    let nodes = membership
+                        .nodes()
+                        .map(|(nid, n)| {
+                            (
+                                *nid,
+                                Node {
+                                    node_id: *nid,
+                                    addr: (*n.addr).to_string(),
+                                },
+                            )
+                        })
+                        .collect();
 
-        // Construct the response, which includes the updated membership
-        // information.  This allows the caller to see the effect of the
-        // add_learner operation on the cluster's configuration.
-        if let Some(membership) = result.membership() {
-            // Get membership info.
-            let configs: Vec<NodeIdSet> = membership
-                .get_joint_config()
-                .iter()
-                .map(|m| {
-                    NodeIdSet {
-                        node_ids: m
-                            .iter()
-                            .map(|key| {
-                                // Convert to NodeIdSet
-                                (*key, Empty {})
-                            })
-                            .collect(),
+                    let membership = Membership {
+                        configs,
+                        nodes,
+                    };
+
+                    Ok(Response::new(ClientWriteResponse {
+                        membership: Some(membership),
+                    }))
+                } else {
+                    let msg = "membership not retrieved";
+                    error!("{}", msg);
+                    Err(Status::internal(msg))
+                }
+            }
+            Err(error) => match error {
+                RaftError::APIError(ForwardToLeader(leader)) => {
+                    if let Some(node) = leader.leader_node {
+                        info!("Forwarding AddLearner request to leader: {:?}", node);
+                        let address = node.addr.clone();
+                        let channel = Channel::from_shared(address.clone())
+                            .map_err(|e| Status::internal(format!("Failed to create channel: {}", e)))?;
+                        let channel = channel.connect().await.map_err(|e| {
+                            Status::internal(format!("Failed to connect to {}: {}", address, e))
+                        })?;
+                        let mut client = ConferServiceClient::new(channel);
+                        let res = client
+                            .add_learner(Request::new(req))
+                            .await?;
+                        Ok(res)
+                    } else {
+                        error!("Failed to forward. Leader not known: {:?}", leader);
+                        Err(Status::internal(format!(
+                            "Failed to forward. Leader not known: {}",
+                            leader
+                        )))
                     }
-                })
-                .collect();
-            let nodes = membership
-                .nodes()
-                .map(|(nid, n)| {
-                    // Convert to Node
-                    (
-                        *nid,
-                        Node {
-                            node_id: *nid,
-                            addr: (*n.addr).to_string(),
-                        },
-                    )
-                })
-                .collect();
-
-            let membership = Membership {
-                // Construct Membership.
-                configs,
-                nodes,
-            };
-
-            Ok(Response::new(ClientWriteResponse {
-                // Construct and return ClientWriteResponse
-                membership: Some(membership),
-            }))
-        } else {
-            let msg = "membership not retrieved";
-            error!("{}", msg);
-            Err(Status::internal(msg))
+                }
+                e => {
+                    error!("Failed to add learner node: {:?}", e);
+                    Err(Status::internal(format!(
+                        "Failed to add learner node: {}",
+                        e
+                    )))
+                }
+            },
         }
     }
 
@@ -489,70 +506,92 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         let result = self
             .raft
             .change_membership(req.members.clone(), req.retain) // Change membership.
-            .await
-            .map_err(|e| {
-                error!("Failed to change membership: {:?}", e);
-                Status::internal(format!("Failed to change membership: {}", e))
-            })?;
+            .await;
 
-        let network_factory = self.network.clone();
-        let current_members: Vec<u64> = self.raft.metrics().borrow().clone()
-            .membership_config.membership()
-            .nodes()
-            .map(|(id, _)| *id)
-            .collect(); // Get node IDs from metrics
 
-        tokio::spawn(async move {
-            for member_id in current_members {
-                if !req.members.contains(&member_id) { // Check directly
-                    network_factory.remove_client(member_id);
-                    info!("Removed cached grpc client for node {}", member_id);
+        match result {
+            Ok(response) => {
+                let network_factory = self.network.clone();
+                let current_members: Vec<u64> = self.raft.metrics().borrow().clone()
+                    .membership_config.membership()
+                    .nodes()
+                    .map(|(id, _)| *id)
+                    .collect();
+
+                tokio::spawn(async move {
+                    for member_id in current_members {
+                        if !req.members.contains(&member_id) {
+                            network_factory.remove_client(member_id);
+                            info!("Removed cached grpc client for node {}", member_id);
+                        }
+                    }
+                });
+                if let Some(membership) = response.membership() {
+                    let configs: Vec<NodeIdSet> = membership
+                        .get_joint_config()
+                        .iter()
+                        .map(|m| NodeIdSet {
+                            node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
+                        })
+                        .collect();
+                    let nodes = membership
+                        .nodes()
+                        .map(|(nid, n)| {
+                            (
+                                *nid,
+                                Node {
+                                    node_id: *nid,
+                                    addr: (*n.addr).to_string(),
+                                },
+                            )
+                        })
+                        .collect();
+
+                    let membership = Membership {
+                        configs,
+                        nodes,
+                    };
+
+                    Ok(Response::new(ClientWriteResponse {
+                        membership: Some(membership),
+                    }))
+                } else {
+                    let msg = "membership not retrieved";
+                    error!("{}", msg);
+                    Err(Status::internal(msg))
                 }
             }
-        });
-
-        // Construct the response, which includes the new membership
-        // information.
-        if let Some(membership) = result.membership() {
-            // Get membership.
-            let configs: Vec<NodeIdSet> = membership
-                .get_joint_config()
-                .iter()
-                .map(|m| {
-                    NodeIdSet {
-                        // Convert to NodeIdSet.
-                        node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
+            Err(error) => match error {
+                RaftError::APIError(ForwardToLeader(leader)) => {
+                    if let Some(node) = leader.leader_node {
+                        info!("Forwarding ChangeMembership request to leader: {:?}", node);
+                        let address = node.addr.clone();
+                        let channel = Channel::from_shared(address.clone())
+                            .map_err(|e| Status::internal(format!("Failed to create channel: {}", e)))?;
+                        let channel = channel.connect().await.map_err(|e| {
+                            Status::internal(format!("Failed to connect to {}: {}", address, e))
+                        })?;
+                        let mut client = ConferServiceClient::new(channel);
+                        let res = client
+                            .change_membership(Request::new(req))
+                            .await?;
+                        Ok(res)
+                    } else {
+                        error!("Failed to forward. Leader not known: {:?}", leader);
+                        Err(Status::internal(format!(
+                            "Failed to forward. Leader not known: {}",
+                            leader
+                        )))
                     }
-                })
-                .collect();
-            let nodes = membership
-                .nodes()
-                .map(|(nid, n)| {
-                    // Convert to Node.
-                    (
-                        *nid,
-                        Node {
-                            node_id: *nid,
-                            addr: (*n.addr).to_string(),
-                        },
-                    )
-                })
-                .collect();
-
-            let membership = Membership {
-                // Construct Membership.
-                configs,
-                nodes,
-            };
-
-            Ok(Response::new(ClientWriteResponse {
-                // Return ClientWriteResponse.
-                membership: Some(membership),
-            }))
-        } else {
-            let msg = "membership not retrieved";
-            error!("{}", msg);
-            Err(Status::internal(msg))
+                }
+                e => {
+                    error!("Failed to change membership: {:?}", e);
+                    Err(Status::internal(format!(
+                        "Failed to change membership: {}",
+                        e
+                    )))
+                }
+            },
         }
     }
 }
