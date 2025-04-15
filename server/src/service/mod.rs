@@ -17,7 +17,7 @@ use crate::proto::confer::v1::{
 };
 
 use crate::raft::{
-    config::{Node as ConferNode, TypeConfig},
+    config::{NodeId, Node as ConferNode, TypeConfig},
     operation::Operation,
     state_machine::StateMachine,
     network::NetworkFactory,
@@ -65,6 +65,42 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
             Status::internal(format!("Failed to connect to {}: {}", address, e))
         })?;
         Ok(ConferServiceClient::new(channel))
+    }
+
+    /// Helper function to create a ClientWriteResponse from a MembershipConfig.
+    // TODO : This trasformation is required because we created our own proto types and not use
+    // the proto types used in openraft. Consider eliminating this.
+    fn create_client_write_response(
+        &self,
+        membership: &openraft::Membership<NodeId, ConferNode>,
+    ) -> Result<ClientWriteResponse, Status> {
+        let configs: Vec<NodeIdSet> = membership
+            .get_joint_config()
+            .iter()
+            .map(|m| NodeIdSet {
+                node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
+            })
+            .collect();
+        let nodes = membership
+            .nodes()
+            .map(|(nid, n)| {
+                (
+                    *nid,
+                    Node {
+                        node_id: *nid,
+                        addr: (*n.addr).to_string(),
+                    },
+                )
+            })
+            .collect();
+
+        let membership = Membership {
+            configs,
+            nodes,
+        };
+        Ok(ClientWriteResponse {
+            membership: Some(membership),
+        })
     }
 }
 
@@ -400,34 +436,8 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                 // information.  This allows the caller to see the effect of the
                 // add_learner operation on the cluster's configuration.
                 if let Some(membership) = response.membership() {
-                    let configs: Vec<NodeIdSet> = membership
-                        .get_joint_config()
-                        .iter()
-                        .map(|m| NodeIdSet {
-                            node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
-                        })
-                        .collect();
-                    let nodes = membership
-                        .nodes()
-                        .map(|(nid, n)| {
-                            (
-                                *nid,
-                                Node {
-                                    node_id: *nid,
-                                    addr: (*n.addr).to_string(),
-                                },
-                            )
-                        })
-                        .collect();
-
-                    let membership = Membership {
-                        configs,
-                        nodes,
-                    };
-
-                    Ok(Response::new(ClientWriteResponse {
-                        membership: Some(membership),
-                    }))
+                    let res = self.create_client_write_response(membership);
+                    Ok(Response::new(res?))
                 } else {
                     let msg = "membership not retrieved";
                     error!("{}", msg);
@@ -514,34 +524,8 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                     }
                 });
                 if let Some(membership) = response.membership() {
-                    let configs: Vec<NodeIdSet> = membership
-                        .get_joint_config()
-                        .iter()
-                        .map(|m| NodeIdSet {
-                            node_ids: m.iter().map(|key| (*key, Empty {})).collect(),
-                        })
-                        .collect();
-                    let nodes = membership
-                        .nodes()
-                        .map(|(nid, n)| {
-                            (
-                                *nid,
-                                Node {
-                                    node_id: *nid,
-                                    addr: (*n.addr).to_string(),
-                                },
-                            )
-                        })
-                        .collect();
-
-                    let membership = Membership {
-                        configs,
-                        nodes,
-                    };
-
-                    Ok(Response::new(ClientWriteResponse {
-                        membership: Some(membership),
-                    }))
+                    let res = self.create_client_write_response(membership);
+                    Ok(Response::new(res?))
                 } else {
                     let msg = "membership not retrieved";
                     error!("{}", msg);
