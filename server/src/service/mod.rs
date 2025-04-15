@@ -53,6 +53,19 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
         debug!("Creating new ConferServiceImpl");
         ConferServiceImpl { raft, state, network }
     }
+
+    /// Helper function to create a ConferServiceClient.
+    async fn create_confer_client(
+        &self,
+        address: String,
+    ) -> Result<ConferServiceClient<Channel>, Status> {
+        let channel = Channel::from_shared(address.clone())
+            .map_err(|e| Status::internal(format!("Failed to create channel: {}", e)))?;
+        let channel = channel.connect().await.map_err(|e| {
+            Status::internal(format!("Failed to connect to {}: {}", address, e))
+        })?;
+        Ok(ConferServiceClient::new(channel))
+    }
 }
 
 #[async_trait]
@@ -146,17 +159,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                     // Handle forwarding.
                     if let Some(node) = leader.leader_node {
                         info!("Forwarding Set request to leader: {:?}", node);
-                        let channel = Channel::from_shared(node.addr.clone())
-                            .map_err(|e| {
-                                Status::invalid_argument(format!("Failed to create channel: {}", e))
-                            })?
-                            .connect()
-                            .await
-                            .map_err(|e| {
-                                Status::unavailable(format!("Failed to connect to leader: {}", e))
-                            })?;
-
-                        let mut client = ConferServiceClient::new(channel);
+                        let mut client = self.create_confer_client(node.addr.clone()).await?;
                         let res = client
                             .set(Request::new(SetConfigRequest {
                                 // Forward the request.
@@ -225,17 +228,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                     // Handle forwarding.
                     if let Some(node) = leader.leader_node {
                         info!("Forwarding Remove request to leader: {:?}", node);
-                        let channel = Channel::from_shared(node.addr.clone())
-                            .map_err(|e| {
-                                Status::invalid_argument(format!("Failed to create channel: {}", e))
-                            })?
-                            .connect()
-                            .await
-                            .map_err(|e| {
-                                Status::unavailable(format!("Failed to connect to leader: {}", e))
-                            })?;
-
-                        let mut client = ConferServiceClient::new(channel);
+                        let mut client = self.create_confer_client(node.addr.clone()).await?;
                         let res = client.remove(Request::new(config_path)).await?; // Forward.
                         Ok(res)
                     } else {
@@ -445,13 +438,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                 RaftError::APIError(ForwardToLeader(leader)) => {
                     if let Some(node) = leader.leader_node {
                         info!("Forwarding AddLearner request to leader: {:?}", node);
-                        let address = node.addr.clone();
-                        let channel = Channel::from_shared(address.clone())
-                            .map_err(|e| Status::internal(format!("Failed to create channel: {}", e)))?;
-                        let channel = channel.connect().await.map_err(|e| {
-                            Status::internal(format!("Failed to connect to {}: {}", address, e))
-                        })?;
-                        let mut client = ConferServiceClient::new(channel);
+                        let mut client = self.create_confer_client(node.addr.clone()).await?;
                         let res = client
                             .add_learner(Request::new(req))
                             .await?;
@@ -494,7 +481,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         &self,
         request: Request<ChangeMembershipRequest>,
     ) -> Result<Response<ClientWriteResponse>, Status> {
-        let req = request.into_inner(); // Extract ChangeMembershipRequest.
+        let req = request.into_inner();
         debug!(
             "Changing membership. Members: {:?}, Retain: {}",
             req.members, req.retain
@@ -565,13 +552,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
                 RaftError::APIError(ForwardToLeader(leader)) => {
                     if let Some(node) = leader.leader_node {
                         info!("Forwarding ChangeMembership request to leader: {:?}", node);
-                        let address = node.addr.clone();
-                        let channel = Channel::from_shared(address.clone())
-                            .map_err(|e| Status::internal(format!("Failed to create channel: {}", e)))?;
-                        let channel = channel.connect().await.map_err(|e| {
-                            Status::internal(format!("Failed to connect to {}: {}", address, e))
-                        })?;
-                        let mut client = ConferServiceClient::new(channel);
+                        let mut client = self.create_confer_client(node.addr.clone()).await?;
                         let res = client
                             .change_membership(Request::new(req))
                             .await?;
