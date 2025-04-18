@@ -1,5 +1,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::pin::Pin;
+
+use tokio::sync::RwLock;
+use tokio_stream::Stream;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
@@ -11,9 +17,12 @@ use openraft::error::{ClientWriteError::ForwardToLeader, RaftError};
 use openraft::Raft;
 
 use crate::proto::confer::v1::{
-    confer_service_client::ConferServiceClient, confer_service_server::ConferService,
+    confer_service_client::ConferServiceClient,
+    confer_service_server::ConferService,
+    watch_update::Kind,
     AddLearnerRequest, ChangeMembershipRequest, ClientWriteResponse, ConfigList, ConfigPath,
     ConfigValue, Empty, InitRequest, Membership, Node, NodeIdSet, SetConfigRequest,
+    WatchUpdate, LeaderInfo,
 };
 
 use crate::raft::{
@@ -24,16 +33,21 @@ use crate::raft::{
 };
 
 use crate::repository::ConferRepository;
+use crate::watchman::WatchMan;
 
 /// The implementation of the Confer service.
 ///
 /// This struct holds the Raft instance and the state machine, and provides
 /// the implementation for the Confer service's gRPC methods.
 pub struct ConferServiceImpl<CR: ConferRepository> {
-    raft: Raft<TypeConfig>,
-    state: Arc<StateMachine<CR>>,
-    network: Arc<NetworkFactory>,
+    raft          : Raft<TypeConfig>,
+    state         : Arc<StateMachine<CR>>,
+    network       : Arc<NetworkFactory>,
+    watch_manager : Arc<WatchMan>,
+    is_leader     : Arc<RwLock<bool>>,
 }
+
+
 
 impl<R: ConferRepository> ConferServiceImpl<R> {
     /// Creates a new ConferServiceImpl.
@@ -48,10 +62,67 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
     ///        to the underlying data store (the repository).  It also handles
     ///        reading data from the store.
     pub fn new(
-        raft: Raft<TypeConfig>, state: Arc<StateMachine<R>>, network: Arc<NetworkFactory>) -> Self
+        raft: Raft<TypeConfig>, state: Arc<StateMachine<R>>, network: Arc<NetworkFactory>, buffer_size: usize, ) -> Self
     {
         debug!("Creating new ConferServiceImpl");
-        ConferServiceImpl { raft, state, network }
+        let watch_manager = Arc::new(WatchMan::new(buffer_size));
+        let is_leader = Arc::new(RwLock::new(false));
+        let this = ConferServiceImpl { raft, state, network, watch_manager, is_leader };
+        this.clone().spawn_leader_watch_task();
+        this
+    }
+
+    // To allow cloning and passing to the task
+    fn clone(&self) -> Self {
+        ConferServiceImpl {
+            raft          : self.raft.clone(),
+            state         : self.state.clone(),
+            network       : self.network.clone(),
+            watch_manager : self.watch_manager.clone(),
+            is_leader     : self.is_leader.clone(),
+        }
+    }
+
+    /// Spawns a background task to monitor leadership changes.
+    fn spawn_leader_watch_task(self) {
+        tokio::spawn(async move {
+            let mut metrics = self.raft.server_metrics();
+            let watch_manager = self.watch_manager.clone();
+            let mut was_leader = self.is_leader.write().await;
+
+            while metrics.changed().await.is_ok() {
+                let current_metrics = metrics.borrow().clone();
+                let is_leader = current_metrics.state.is_leader();
+
+                if is_leader != *was_leader {
+                    // leadership changed
+                    *self.is_leader.write().await = is_leader;
+                    *was_leader = is_leader;
+
+                    if !is_leader {
+                        // Only the previous leader notifies its watchers.
+                        if let Some(leader_id) = current_metrics.current_leader {
+                            if let Some(leader_node) = current_metrics
+                                .membership_config
+                                .nodes()
+                                .find(|(id, _)| **id == leader_id)
+                                .map(|(_, node)| node.clone())
+                            {
+                                //let message = WatchUpdate::LeaderChanged (leader_node.addr);
+                                let message = WatchUpdate {
+                                    kind: Some(Kind::LeaderChanged(
+                                        LeaderInfo {address: leader_node.addr}
+                                    )
+                                )};
+                                watch_manager.notify_leader_change(message).await;
+                                watch_manager.clear().await;
+                                watch_manager.clear_leader_watchers().await;
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     /// Helper function to create a ConferServiceClient.
@@ -106,6 +177,15 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
 
 #[async_trait]
 impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
+
+    /// Watches for changes to the configuration value at the given path.
+    type WatchConfigStream =
+        Pin<Box<dyn Stream<Item = Result<WatchUpdate, Status>> + Send + 'static>>;
+
+    /// Watches for changes to the status of the raft node.
+    type WatchLeaderStream =
+        Pin<Box<dyn Stream<Item = Result<WatchUpdate, Status>> + Send + 'static>>;
+
     /// Retrieves a configuration value by path.
     ///
     /// # Arguments
@@ -160,14 +240,10 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
     ///     -  On failure, returns a `Status` indicating the error.
     #[instrument(skip(self, request))]
     async fn set(&self, request: Request<SetConfigRequest>) -> Result<Response<Empty>, Status> {
-        let config_path = request.into_inner(); // Extract SetConfigRequest.
-        let path = config_path
-            .path
-            .clone()
+        let config_path = request.into_inner();
+        let path = config_path.path.clone()
             .ok_or_else(|| Status::invalid_argument("Path is required"))?;
-        let value = config_path
-            .value
-            .clone()
+        let value = config_path.value.clone()
             .ok_or_else(|| Status::invalid_argument("Value is required"))?;
 
         info!("Received set request for path: {:?}", &path);
@@ -188,6 +264,11 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         match result {
             Ok(_reponse) => {
                 info!("Successfully set value for path: {:?}", &path);
+                // Notify watchers
+                let message = WatchUpdate {
+                    kind: Some(Kind::UpdatedValue(value.value)
+                )};
+                self.watch_manager.notify(&path.path, message).await;
                 Ok(Response::new(Empty {}))
             }
             Err(error) => match error {
@@ -257,6 +338,11 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         match result {
             Ok(_response) => {
                 info!("Successfully removed value for path: {:?}", &config_path);
+                // Notify watchers
+                let message = WatchUpdate {
+                    kind: Some(Kind::Removed(Empty {}))
+                };
+                self.watch_manager.notify(&config_path.path, message).await;
                 Ok(Response::new(Empty {}))
             }
             Err(error) => match error {
@@ -327,6 +413,75 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             }
         }
     }
+
+
+    #[instrument(skip(self, request))]
+    async fn watch_config(
+        &self,
+        request: Request<ConfigPath>,
+    ) -> Result<Response<Self::WatchConfigStream>, Status>
+    {
+        let config_path = request.into_inner();
+        info!("Received watch config request for path: {:?}", &config_path);
+
+        let rx = self.watch_manager.watch(config_path.path.clone()).await.map_err(|e| {
+            Status::internal(format!("Failed to subscribe to watcher: {}", e))
+        })?;
+
+        let stream = BroadcastStream::new(rx).map(move |result| {
+            result.map_err(|e| Status::cancelled(format!("{}",e)))
+        });
+
+        let initial_value = self.get(Request::new(config_path.clone())).await.ok().map(|resp| resp.into_inner().value);
+        let initial_update = if let Some(value) = initial_value {
+            WatchUpdate {
+                kind: Some(Kind::UpdatedValue(value)),
+            }
+        } else {
+             WatchUpdate {
+                kind: Some(Kind::Removed(Empty {})),
+            }
+        };
+
+        let stream = tokio_stream::once(Ok(initial_update)).chain(stream);
+        Ok(Response::new(Box::pin(stream) as Self::WatchConfigStream))
+    }
+
+    #[instrument(skip(self, request))]
+    async fn unwatch_config( &self, request: Request<ConfigPath>,) -> Result<Response<Empty>, Status> {
+        let config_path = request.into_inner();
+        info!("Received unwatch config request for path: {:?}", &config_path);
+
+        let _ = self.watch_manager.unwatch(&config_path.path);
+
+        Ok(Response::new(Empty{}))
+    }
+
+    #[instrument(skip(self))]
+    async fn watch_leader(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<Self::WatchLeaderStream>, Status>
+    {
+
+        info!("Received watch leader request");
+
+        let rx = self.watch_manager.watch_leader().await.map_err(|e| {
+            Status::internal(format!("Failed to subscribe to leader: {}", e))
+        })?;
+
+        // Convert the receiver into a stream, mapping errors as necessary.
+        let stream = BroadcastStream::new(rx).map(move |result| {
+            result.map_err(|e| Status::cancelled(format!("{}",e)))
+        });
+
+
+        Ok(Response::new(Box::pin(stream) as Self::WatchConfigStream))
+
+        // Return the stream.
+        //Ok(Response::new(Box::pin(stream) as Self::WatchLeaderStream))
+    }
+
 
     /// Initializes the Raft cluster.
     ///
