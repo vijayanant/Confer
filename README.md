@@ -1,174 +1,86 @@
-# Confer: A Distributed Configuration Manager
+# Confer: A Platform for Distributed Coordination
 
-*Confer* is a distributed configuration manager. It uses the Raft consensus
-algorithm to provide a reliable and consistent way to store and distribute
-configuration data.
+*Confer* is a platform for building distributed applications. At its core, it provides strong consistency, fault tolerance, and coordination primitives built on the Raft consensus algorithm.
 
-Confer is in its early stages of development; you are welcome to
-[contribute](#contributing).
+Originally conceived as a distributed configuration manager, Confer has grown into a general-purpose foundation for building reliable systems that need to replicate and agree on state across a cluster.
+
+> **Why the name?**
+> The word *"confer"* means to consult, deliberate, or come to an agreement—just like nodes in a distributed system reaching consensus. It's a fitting name for a platform built around coordination and agreement.
+
+This is an ongoing learning project, evolving organically as new ideas and use cases emerge.
+
+---
 
 ## What's Available Now?
 
-- Cluster set-up.
-- CLI tool to manage the cluster.
-- API for clients to manage  configurations.
-- A hierarchical (path-like) namespace for keys. (Ex. `/app/config/timeout`)
-- Watch/Subscribe: Clients can subscribe to changes in configuration values and
-  receive real-time updates.
+- Raft-based consensus and log replication
+- Cluster initialization and dynamic membership via CLI
+- Hierarchical key-value store with path-like namespaces (e.g. `/app/config/timeout`)
+- Watch/subscribe API: clients can receive real-time updates on key changes
+- Rust client library (gRPC-based)
 
-## What's on the Horizon?
+---
 
-There are lots and lots of things that can be added here. But let me not get
-ahead of myself. Let me only add what can be done in near future. The plan
-includes: 
+## Beyond Configuration: The Vision for Confer
 
-- Adding persistence (currently logs are in-memory).
-- Dynamic discovery (preferably using Confer itself!)
-- API for monitoring cluster status
-- Metadata and versioning of snapshots?
-- And, of course, lots and lots of testing!
+Confer began as an experiment in building a distributed configuration manager. But as the foundational elements took shape—consensus, coordination, state replication—it became clear that the same core could support a wide variety of distributed systems use cases.
 
-## Building and Running (Work in Progress)
+### Core Capabilities
 
-This project is very much a work in progress. Building and running
-instructions are likely to change as I learn and experiment. The best place for
-now is to peek at the source code for the latest state of affairs.
+- **Distributed Key-Value Store**: Store data across a cluster with strong consistency.
+- **Strong Consistency**: Writes are replicated safely to all nodes using Raft.
+- **Fault Tolerance**: Tolerates node failures while maintaining availability.
+- **Watch/Subscribe Mechanism**: Clients can subscribe to key changes in real time.
 
-### Prerequisites
+### Potential Applications
 
-- Rust and Cargo
-- Protobuf compiler
+These capabilities unlock a wide range of distributed coordination patterns:
 
-### Building
+- **Service Discovery**: Store and watch for service endpoint registrations.
+- **Distributed Locking**: Ensure mutual exclusion for shared resources.
+- **Leader Election**: Raft's native leader election can coordinate responsibilities.
+- **Metadata Management**: Store and replicate operational metadata reliably.
+- **Real-Time State Distribution**: Push updates to dashboards or monitoring tools.
+- **General Coordination Primitives**: Build custom protocols on top of consistent state.
 
-#### Clone the repository:
+### A Note on Comparisons
 
-   ```bash
-   git clone https://github.com/vijayanant/confer.git
-   ```
-#### Build the project 
-   
-   ```bash
-   cargo build
-   ```
+You might wonder how Confer compares to established tools like ZooKeeper or etcd. The truth is: it doesn't—at least not yet. This project wasn't built to compete, but to learn.
 
-This should build both the server and the CLI (in the client).
+Confer is an experiment. It's about exploring distributed consensus, understanding coordination, and building something from scratch. That said, it's interesting to reflect on how similar foundations can support real-world use cases, and what we might learn by building them ourselves.
 
-## Setting Up A Cluster
-This section provides a step-by-step guide on using the Confer CLI to establish
-a basic two-node cluster.
+If this ever becomes practical or production-ready, that’ll be a fun conversation to have. For now, it’s about curiosity, clarity, and learning in public.
 
-### Start the first server (Node 1):
+---
 
-```
-./target/debug/server --id 1 --server 127.0.0.1:10001
-```  
+## What's Next?
 
-This command launches the Confer server, configuring it as Node 1 with the
-address _127.0.0.1:10001_.
+- Persistence (logs and snapshots)
+- Metadata and versioning support
+- Cluster health and status APIs
+- Service discovery APIs
+- More client libraries (Go, JS?)
+- Testing, testing, testing
 
-### Start the second server (Node 2):
+---
 
-```
-./server --id 2 --server 127.0.0.1:10002
-```
+## Building and Running
 
-Similarly, this starts the second Confer server instance, configured as Node 2
-with the address _127.0.0.1:10002_.
+Build instructions, CLI usage, and cluster setup examples have been moved to the [docs/](./docs) directory. See:
 
-### Initialize the cluster using the CLI:
-```
-./target/debug/confer-cli --address http://127.0.0.1:10001 init --nodes 1=http://127.0.0.1:10001,2=http://127.0.0.1:10002
-```
+- [docs/build.md](./docs/build.md) — Build prerequisites and steps
+- [docs/cluster.md](./docs/cluster.md) — Cluster setup and usage examples
+- [docs/client.md](./docs/client.md) — Using the Rust client SDK
 
-This forms the Raft cluster with two nodes.  
-
-- `--address` specifies that the CLI should send the init command to the Confer
-  server running as Node 1.  This server will coordinate the cluster
-initialization. 
-- `init` invokes the init command. 
-- `--nodes` provides the list of nodes that should be part of the initial
-  cluster configuration.
-
-The CLI command can be executed from any machine that has network connectivity
-to the Confer servers. The `--address` option determines which server receives
-the initialization request. 
-
-### Verify the cluster: 
-After the `init` command is executed, the Confer servers will begin the process
-of forming a Raft cluster. This involves leader election and log replication.
-Currently, the Confer CLI does not have a command to directly query the cluster
-status. You will need to use other methods to verify that the cluster has been
-successfully established. 
-
-- Examine the log output of both Node 1 and Node 2. Look for messages
-  indicating successful leader election, node joining, and log replication.
-
-- Custom gRPC calls: There is no test client written, you will have to write
-  your own client to set and get values and confirm.
-
-
-### Dynamically add a learner node (Node 3):
-
-Start the third server (Node 3):
-
-```
-./server --id 3 --server 127.0.0.1:10003
-```
-
-Use the `add-learner` command to add `Node 3` as a learner to the cluster. This
-command can be sent to either `Node 1` or `Node 2``, as they are part of the
-cluster.
-
-``` 
-./confer-cli --address http://127.0.0.1:10001 add-learner --node 3=http://127.0.0.1:10003
-```
-
-This command instructs `Node 1` to add `Node 3` as a learner.  Node 3 will
-start replicating the log, but will not participate in voting.
-
-To add Node 3 as a full member (voter) to the cluster, you would use the
-`change-membership` command.  This command requires you to specify the desired
-membership configuration for the cluster.
-
-```
-./confer-cli --address http://127.0.0.1:10001 change-membership --members 1,2,3
-```
-
-This command tells Node 1 to change the cluster membership to include nodes 1,
-2, and 3 as voters.  Node 3 will participate in voting.
-
-If Node 3 was previously a learner, this command will promote it to a voter.
-
-## Confer Client Library/SDK
-
-### Rust
-
-The Confer Rust client library allows Rust applications to interact with a Confer server.
-
-#### Usage
-
-```rust
-use confer_client::*;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = connect("http://[::1]:10001".to_string()).await?;
-    set_value(&mut client, "my-key".to_string(), "my-value".as_bytes().to_vec()).await?;
-    let value = get_value(&mut client, "my-key".to_string()).await?;
-    println!("Value: {:?}", value);
-    Ok(())
-}
-```
-
-Refer to the example in the repo for using the watch api. 
+---
 
 ## Contributing
-Confer is a personal project aimed at learning. Even so, your contributions are
-welcome! If you find something interesting or have suggestions, feel free to
-open an issue or better send a pull request.
 
-We appreciate your contributions!
+This project is a learning journey, but contributions are welcome! If you have ideas, suggestions, or find bugs, feel free to open an issue or a pull request.
+
+---
 
 ## License
+
 MIT License
+
