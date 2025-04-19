@@ -13,6 +13,8 @@ Confer is in its early stages of development; you are welcome to
 - CLI tool to manage the cluster.
 - API for clients to manage  configurations.
 - A hierarchical (path-like) namespace for keys. (Ex. `/app/config/timeout`)
+- Watch/Subscribe: Clients can subscribe to changes in configuration values and
+  receive real-time updates.
 
 ## What's on the Horizon?
 
@@ -21,7 +23,6 @@ ahead of myself. Let me only add what can be done in near future. The plan
 includes: 
 
 - Adding persistence (currently logs are in-memory).
-- Watch/Subscribe
 - Dynamic discovery (preferably using Confer itself!)
 - API for monitoring cluster status
 - Metadata and versioning of snapshots?
@@ -29,7 +30,7 @@ includes:
 
 ## Building and Running (Work in Progress)
 
-This project is very much a work in progress.  Building and running
+This project is very much a work in progress. Building and running
 instructions are likely to change as I learn and experiment. The best place for
 now is to peek at the source code for the latest state of affairs.
 
@@ -160,31 +161,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**TODO**
-
-- Include a complete, runnable example.
-- Show how to handle errors.
-- Publish to crates.io, include the crate version.
-
+Refer to the example in the repo for using the watch api. 
 
 ## Contributing
-Confer is an open-source project, and contributions are welcome!  If you find
-something interesting or have suggestions, feel free to open an issue or better
-send us a pull request.
-
-If you'd like to contribute, please follow these guidelines:
-
-- **Fork the repository:** Start by creating your own fork of the Confer
-repository on GitHub.
-
-- **Create a branch:** Create a new branch in your fork for the feature or bug
-fix you're working on.
-
-- **Make your changes:** Implement your changes, ensuring that they adhere to
-the project's coding style and include appropriate tests.
-
-- **Submit a pull request:** Once you're satisfied with your changes, submit a
-pull request to the main Confer repository.
+Confer is a personal project aimed at learning. Even so, your contributions are
+welcome! If you find something interesting or have suggestions, feel free to
+open an issue or better send a pull request.
 
 We appreciate your contributions!
 
