@@ -16,8 +16,10 @@ This is an ongoing learning project, evolving organically as new ideas and use c
 - Raft-based consensus and log replication
 - Cluster initialization and dynamic membership via CLI
 - Hierarchical key-value store with path-like namespaces (e.g. `/app/config/timeout`)
-- Watch/subscribe API: clients can receive real-time updates on key changes
-- Rust client library (gRPC-based)
+- Watch/subscribe API:
+    - `WatchConfig`: Clients can receive real-time updates on key changes.
+    - `WatchCluster`: Clients can subscribe to and receive updates about the cluster's voting members (additions and removals) and the current leader.
+- Rust client library (gRPC-based) enabling interaction with the Confer cluster, including subscribing to configuration and cluster updates.
 
 ---
 

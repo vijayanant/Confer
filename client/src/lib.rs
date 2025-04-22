@@ -1,3 +1,5 @@
+pub mod error;
+
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -15,15 +17,12 @@ pub mod confer {
     }
 }
 
-use confer::v1::watch_update::Kind;
+use crate::error::ClientError;
 use confer::v1::confer_service_client::ConferServiceClient;
 use confer::v1::{
-    ConfigPath,
-    ConfigValue,
-    SetConfigRequest,
-    WatchUpdate,
-    Empty,
-    LeaderInfo};
+    ConfigPath, ConfigValue,
+    Empty, SetConfigRequest,
+    ConfigUpdate, ClusterUpdate};
 
 
 /// A client for interacting with the Confer configuration service.
@@ -32,8 +31,9 @@ use confer::v1::{
 /// It uses gRPC for communication and supports secure connections via TLS.
 #[derive(Debug)]
 pub struct ConferClient {
-    client: ConferServiceClient<Channel>,
-    watchers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>, // Keep track of watch tasks
+    client: Arc<RwLock<ConferServiceClient<Channel>>>,
+    config_watchers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
+    cluster_watchers: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
 }
 
 impl ConferClient {
@@ -49,22 +49,30 @@ impl ConferClient {
     pub async fn new(
         addr: String,
         tls_config: Option<ClientTlsConfig>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, ClientError> {
         let channel = match tls_config {
             Some(config) => {
                 info!("Connecting to Confer server with TLS: {}", addr);
-                let client_builder = tonic::transport::Channel::from_shared(addr)?;
-                client_builder.tls_config(config)?.connect().await?
+                let client_builder = tonic::transport::Channel::from_shared(addr)
+                    .map_err(|e| ClientError::ConnectionError(e.to_string()))?;
+                client_builder.tls_config(config)
+                    .map_err(|e| ClientError::ConnectionError(e.to_string()))?
+                    .connect().await
+                    .map_err(|e| ClientError::ConnectionError(e.to_string()))?
             }
             None => {
                 info!("Connecting to Confer server without TLS: {}", addr);
-                tonic::transport::Channel::from_shared(addr)?.connect().await?
+                tonic::transport::Channel::from_shared(addr)
+                    .map_err(|e| ClientError::ConnectionError(e.to_string()))?
+                    .connect().await
+                    .map_err(|e| ClientError::ConnectionError(e.to_string()))?
             }
         };
 
-        let client = ConferServiceClient::new(channel);
-        let watchers = Arc::new(RwLock::new(HashMap::new()));
-        Ok(ConferClient { client, watchers })
+        let client = Arc::new(RwLock::new(ConferServiceClient::new(channel)));
+        let config_watchers = Arc::new(RwLock::new(HashMap::new()));
+        let cluster_watchers = Arc::new(RwLock::new(HashMap::new()));
+        Ok(ConferClient { client, config_watchers, cluster_watchers })
     }
 
     /// Retrieves the configuration value for a given path.
@@ -77,10 +85,12 @@ impl ConferClient {
     ///
     /// A `Result` containing the configuration value as a byte vector, or an error if the operation fails.
     #[instrument(skip(self), err)]
-    pub async fn get(&mut self, path: String) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn get(&self, path: String) -> Result<Vec<u8>, ClientError> {
         info!("Getting config for path: {}", path);
         let request = Request::new(ConfigPath { path });
-        let response = self.client.get(request).await?;
+        let mut client = self.client.write().await;
+        let response = client.get(request).await
+            .map_err(ClientError::GrpcError)?;
         Ok(response.into_inner().value)
     }
 
@@ -95,13 +105,15 @@ impl ConferClient {
     ///
     /// A `Result` indicating success or failure.
     #[instrument(skip(self, value), err)]
-    pub async fn set(&mut self, path: String, value: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn set(&self, path: String, value: Vec<u8>) -> Result<(), ClientError> {
         info!("Setting config for path: {}", path);
         let request = Request::new(SetConfigRequest {
             path: Some(ConfigPath { path }),
             value: Some(ConfigValue { value }),
         });
-        self.client.set(request).await?;
+        let mut client = self.client.write().await;
+        client.set(request).await
+            .map_err(ClientError::GrpcError)?;
         Ok(())
     }
 
@@ -115,10 +127,12 @@ impl ConferClient {
     ///
     /// A `Result` indicating success or failure.
     #[instrument(skip(self), err)]
-    pub async fn remove(&mut self, path: String) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn remove(&self, path: String) -> Result<(), ClientError> {
         info!("Removing config for path: {}", path);
         let request = Request::new(ConfigPath { path });
-        self.client.remove(request).await?;
+        let mut client = self.client.write().await;
+        client.remove(request).await
+            .map_err(ClientError::GrpcError)?;
         Ok(())
     }
 
@@ -132,15 +146,16 @@ impl ConferClient {
     ///
     /// A `Result` containing a vector of paths, or an error if the operation fails.
     #[instrument(skip(self), err)]
-    async fn list(&mut self, path: String) -> Result<Response<Vec<String>>, Status> {
+    async fn list(&self, path: String) -> Result<Response<Vec<String>>, Status> { // Keep as Status for now, as that's what the direct gRPC call returns
         let request = Request::new(ConfigPath { path });
-        let response = self.client.list(request).await?;
+        let mut client = self.client.write().await;
+        let response = client.list(request).await?;
         Ok(Response::new(response.into_inner().paths))
     }
 
     /// Watches for changes to the configuration value at the given path.
     ///
-    /// Returns a stream of `WatchUpdate` messages.
+    /// Returns a stream of `ConfigUpdate` messages.
     ///
     /// # Arguments
     ///
@@ -148,46 +163,46 @@ impl ConferClient {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the `Stream` of `WatchUpdate` messages, or an error.
+    /// A `Result` containing the `Stream` of `ConfigUpdate` messages, or an error.
     #[instrument(skip(self), err)]
     pub async fn watch_config(
-        &mut self,
+        &self,
         path: String,
-    ) -> Result<Response<Streaming<WatchUpdate>>, Box<dyn std::error::Error>> {
+    ) -> Result<Response<Streaming<ConfigUpdate>>, ClientError> {
         info!("Watching config for path: {}", path);
         let request = Request::new(ConfigPath { path });
-        let response = self.client.watch_config(request).await?;
-        Ok(response) // No need to convert here
+        let mut client = self.client.write().await;
+        client.watch_config(request).await
+            .map_err(ClientError::GrpcError)
     }
-
 
     /// Watches for changes to the configuration value at the given path and calls a callback.
     ///
-    /// This method starts a new task that receives `WatchUpdate` messages from the server
+    /// This method starts a new task that receives `ConfigUpdate` messages from the server
     /// and calls the provided `callback` function for each message.
     ///
     /// # Arguments
     ///
     /// * `path` - The path to watch for changes.
     /// * `callback` - A closure to be called when a change occurs.  The closure
-    ///              receives a `Result<WatchUpdate, Status>`.
+    ///                 receives a `Result<ConfigUpdate, ClientError>`.
     ///
     /// # Returns
     ///
     /// A `Result` indicating success or failure in setting up the watch.
     #[instrument(skip(self, callback))]
     pub async fn watch_config_with_callback<F>(
-        &mut self,
+        &self,
         path: String,
         callback: F,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> Result<(), ClientError>
     where
-        F: Fn(Result<WatchUpdate, Status>) + Send + Sync + 'static,
+        F: Fn(Result<ConfigUpdate, ClientError>) + Send + Sync + 'static,
     {
         info!("Watching config with callback for path: {}", path);
         let mut stream = self.watch_config_internal(path.clone()).await?;
 
-        let watchers = Arc::clone(&self.watchers);
+        let config_watchers = self.config_watchers.clone();
         let task_key = path.clone();
         let handle = tokio::spawn(async move {
             loop {
@@ -198,21 +213,22 @@ impl ConferClient {
                     }
                     Ok(None) => {
                         warn!("Stream ended for path: {}", task_key);
+                        callback(Err(ClientError::GrpcError(Status::unavailable("Config watch stream ended by server"))));
                         break;
                     }
                     Err(e) => {
                         error!("Error watching path {}: {}", task_key, e);
-                        callback(Err(e));
+                        callback(Err(ClientError::GrpcError(e)));
                         break;
                     }
                 }
             }
-            let mut watchers = watchers.write().await;
+            let mut watchers = config_watchers.write().await;
             watchers.remove(&task_key);
             info!("Watcher task for path {} removed", task_key);
         });
 
-        let mut watchers = self.watchers.write().await;
+        let mut watchers = self.config_watchers.write().await;
         watchers.insert(path, handle);
         Ok(())
     }
@@ -220,102 +236,101 @@ impl ConferClient {
     /// Internal helper to get the watch stream.
     #[instrument(skip(self), err)]
     async fn watch_config_internal(
-        &mut self,
+        &self,
         path: String,
-    ) -> Result<Streaming<WatchUpdate>, Box<dyn std::error::Error>> {
+    ) -> Result<Streaming<ConfigUpdate>, ClientError> {
         let request = Request::new(ConfigPath { path });
-        let response = self.client.watch_config(request).await?;
+        let mut client = self.client.write().await;
+        let response = client.watch_config(request).await
+            .map_err(ClientError::GrpcError)?;
         Ok(response.into_inner())
     }
 
-    /// Watches for changes in the Raft leader.
-    ///
-    /// Returns a stream of `WatchUpdate` messages, where the `kind` field will be
-    /// a `LeaderInfo` message.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the `Stream` of `WatchUpdate` messages, or an error.
-    #[instrument(skip(self), err)]
-    pub async fn watch_leader(
-        &mut self,
-    ) -> Result<Response<Streaming<WatchUpdate>>, Box<dyn std::error::Error>> {
-        info!("Watching for Raft leader changes.");
-        let request = Request::new(Empty {});
-        let response = self.client.watch_leader(request).await?;
-        Ok(response)
-    }
-
-    /// Watches for changes in the Raft leader and calls a callback.
-    ///
-    /// This method starts a new task that receives `WatchUpdate` messages from the server
-    /// and calls the provided `callback` function for each message.  The `callback`
-    /// will only be called when the leader changes.
-    ///
-    /// # Arguments
-    ///
-    /// * `callback` - A closure to be called when the leader changes. The closure
-    ///              receives a `Result<WatchUpdate, Status>`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating success or failure.
+    /// Watches for cluster changes and calls a callback.
     #[instrument(skip(self, callback))]
-    pub async fn watch_leader_with_callback<F>(
-        &mut self,
+    pub async fn watch_cluster<F>(
+        &self,
         callback: F,
-    ) -> Result<(), Box<dyn std::error::Error>>
+    ) -> Result<(), ClientError>
     where
-        F: Fn(Result<WatchUpdate, Status>) + Send + Sync + 'static,
+        F: Fn(Result<ClusterUpdate, ClientError>) + Send + Sync + 'static,
     {
-        info!("Watching Raft leader with callback.");
-        let mut stream = self.client.watch_leader(Request::new(Empty {})).await?.into_inner();
-
-        let watchers = Arc::clone(&self.watchers);
-        let task_key = "leader".to_string();
+        info!("Watching for cluster changes.");
+        let mut stream = self.watch_cluster_internal().await?;
+        let cluster_watchers = Arc::clone(&self.cluster_watchers);
+        let task_key = "cluster".to_string();
+        let task_key_clone = task_key.clone();
         let handle = tokio::spawn(async move {
             loop {
                 match stream.message().await {
                     Ok(Some(update)) => {
-                         if let Some(Kind::LeaderChanged(LeaderInfo{..})) = update.kind {
-                            info!("Leader changed");
-                            callback(Ok(update));
-                         }
-                         else {
-                            warn!("Received non-leader update: {:?}", update);
-                         }
+                        info!("Cluster update received");
+                        callback(Ok(update));
                     }
                     Ok(None) => {
-                        warn!("Leader watch stream ended");
+                        warn!("Cluster watch stream ended");
+                        callback(Err(ClientError::GrpcError(Status::unavailable("Cluster watch stream ended by server"))));
                         break;
                     }
                     Err(e) => {
-                        error!("Error watching leader: {}", e);
-                        callback(Err(e));
+                        error!("Error watching cluster: {}", e);
+                        callback(Err(ClientError::GrpcError(e)));
                         break;
                     }
                 }
             }
-            let mut watchers = watchers.write().await;
-            watchers.remove(&task_key);
-            info!("Leader watcher task removed");
+            let mut watchers = cluster_watchers.write().await;
+            watchers.remove(&task_key_clone);
+            info!("Cluster watcher task removed");
         });
 
-        let mut watchers = self.watchers.write().await;
-        watchers.insert("leader".to_string(), handle);
+        let mut watchers = self.cluster_watchers.write().await;
+        watchers.insert(task_key, handle);
         Ok(())
     }
 
-    /// Cancels all active watchers.
+    /// Internal helper to get the watch cluster stream.
+    #[instrument(skip(self), err)]
+    async fn watch_cluster_internal(
+        &self,
+    ) -> Result<Streaming<ClusterUpdate>, ClientError> {
+        let request = Request::new(Empty {});
+        let mut client = self.client.write().await;
+        let response = client.watch_cluster(request).await
+            .map_err(ClientError::GrpcError)?;
+        Ok(response.into_inner())
+    }
+
+    /// Cancels all active config watchers.
     #[instrument(skip(self))]
-    pub async fn cancel_watchers(&self) {
-        let mut watchers = self.watchers.write().await;
-        info!("Cancelling {} watcher tasks", watchers.len());
+    pub async fn cancel_config_watchers(&self) {
+        let mut watchers = self.config_watchers.write().await;
+        info!("Cancelling {} config watcher tasks", watchers.len());
         for (key, handle) in watchers.iter() {
             handle.abort();
-            info!("Cancelled watcher for key: {}", key);
+            info!("Cancelled config watcher for key: {}", key);
         }
         watchers.clear();
-        info!("All watcher tasks cancelled");
+        info!("All config watcher tasks cancelled");
+    }
+
+    /// Cancels all active cluster watchers.
+    #[instrument(skip(self))]
+    pub async fn cancel_cluster_watchers(&self) {
+        let mut watchers = self.cluster_watchers.write().await;
+        info!("Cancelling {} cluster watcher tasks", watchers.len());
+        for (key, handle) in watchers.iter() {
+            handle.abort();
+            info!("Cancelled cluster watcher for key: {}", key);
+        }
+        watchers.clear();
+        info!("All cluster watcher tasks cancelled");
+    }
+
+    /// Cancels all active watchers (both config and cluster).
+    #[instrument(skip(self))]
+    pub async fn cancel_all_watchers(&self) {
+        self.cancel_config_watchers().await;
+        self.cancel_cluster_watchers().await;
     }
 }
