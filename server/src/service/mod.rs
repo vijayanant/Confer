@@ -19,10 +19,11 @@ use openraft::Raft;
 use crate::proto::confer::v1::{
     confer_service_client::ConferServiceClient,
     confer_service_server::ConferService,
-    watch_update::Kind,
+    config_update::UpdateType as ConfigUpdateType,
+    cluster_update::UpdateType as ClusterUpdateType,
+    ConfigUpdate, ClusterUpdate,
     AddLearnerRequest, ChangeMembershipRequest, ClientWriteResponse, ConfigList, ConfigPath,
     ConfigValue, Empty, InitRequest, Membership, Node, NodeIdSet, SetConfigRequest,
-    WatchUpdate, LeaderInfo,
 };
 
 use crate::raft::{
@@ -68,7 +69,7 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
         let watch_manager = Arc::new(WatchMan::new(buffer_size));
         let is_leader = Arc::new(RwLock::new(false));
         let this = ConferServiceImpl { raft, state, network, watch_manager, is_leader };
-        this.clone().spawn_leader_watch_task();
+        this.clone().spawn_cluster_watch_task();
         this
     }
 
@@ -83,45 +84,77 @@ impl<R: ConferRepository> ConferServiceImpl<R> {
         }
     }
 
-    /// Spawns a background task to monitor leadership changes.
-    fn spawn_leader_watch_task(self) {
+    /// Spawns a background task to monitor cluster changes.
+    fn spawn_cluster_watch_task(self) {
         tokio::spawn(async move {
-            let mut metrics = self.raft.server_metrics();
+            let mut membership_metrics = self.raft.server_metrics();
             let watch_manager = self.watch_manager.clone();
-            let mut was_leader = self.is_leader.write().await;
+            let mut previous_membership: std::collections::HashSet<u64> = Default::default();
+            let mut previous_leader: Option<NodeId> = None;
 
-            while metrics.changed().await.is_ok() {
-                let current_metrics = metrics.borrow().clone();
-                let is_leader = current_metrics.state.is_leader();
+            info!("Starting background task to monitor cluster membership changes (diff-based).");
+            while membership_metrics.changed().await.is_ok() {
+                let metrics = membership_metrics.borrow().clone();
+                let membership = metrics.membership_config.membership().clone();
+                //let current_node_ids: std::collections::HashSet<u64> = membership.config().map(|(id, _)| *id).collect();
+                let current_node_ids: std::collections::HashSet<u64> = membership
+                    .get_joint_config()
+                    .iter()
+                    .flat_map(|config| config.iter().map(|id| *id))
+                    .collect();
 
-                if is_leader != *was_leader {
-                    // leadership changed
-                    *self.is_leader.write().await = is_leader;
-                    *was_leader = is_leader;
+                let current_leader = metrics.current_leader;
 
-                    if !is_leader {
-                        // Only the previous leader notifies its watchers.
-                        if let Some(leader_id) = current_metrics.current_leader {
-                            if let Some(leader_node) = current_metrics
-                                .membership_config
-                                .nodes()
-                                .find(|(id, _)| **id == leader_id)
-                                .map(|(_, node)| node.clone())
-                            {
-                                //let message = WatchUpdate::LeaderChanged (leader_node.addr);
-                                let message = WatchUpdate {
-                                    kind: Some(Kind::LeaderChanged(
-                                        LeaderInfo {address: leader_node.addr}
-                                    )
-                                )};
-                                watch_manager.notify_leader_change(message).await;
-                                watch_manager.clear().await;
-                                watch_manager.clear_leader_watchers().await;
-                            }
-                        }
+                // Detect added members
+                for added_id in current_node_ids.difference(&previous_membership) {
+                    if let Some((_, node)) = membership.nodes().find(|(id, _)| *id == added_id) {
+                        let update = ClusterUpdate {
+                            update_type: Some(ClusterUpdateType::MemberAdded(Node {
+                                node_id: *added_id,
+                                addr: node.addr.clone(),
+                            })),
+                        };
+                        watch_manager.notify_cluster_change(update).await;
                     }
                 }
+
+                // Detect removed members
+                for removed_id in previous_membership.difference(&current_node_ids) {
+                    let update = ClusterUpdate {
+                        update_type: Some(ClusterUpdateType::MemberRemoved(*removed_id)),
+                    };
+                    watch_manager.notify_cluster_change(update).await;
+                }
+
+                previous_membership = current_node_ids;
+
+                // Detect leader change
+                if current_leader != previous_leader {
+                    if let Some(leader_id) = current_leader {
+                        if let Some((_, leader_node)) = membership.nodes().find(|(id, _)| *id == &leader_id) {
+                        //if let Some(leader_node) = membership.nodes().get(&leader_id) {
+                            let update = ClusterUpdate {
+                                update_type: Some(ClusterUpdateType::LeaderChanged(Node {
+                                    node_id: leader_id,
+                                    addr: leader_node.addr.clone(),
+                                })),
+                            };
+                            watch_manager.notify_cluster_change(update).await;
+                        }
+                    } else if previous_leader.is_some() {
+                        // Leader lost (could send a LeaderChanged with an empty Node or a specific marker)
+                        let update = ClusterUpdate {
+                            update_type: Some(ClusterUpdateType::LeaderChanged(Node {
+                                node_id: 0, // Or a special value
+                                addr: "".to_string(),
+                            })),
+                        };
+                        watch_manager.notify_cluster_change(update).await;
+                    }
+                    previous_leader = current_leader;
+                }
             }
+            error!("Background task monitoring cluster membership changes (diff-based) exited.");
         });
     }
 
@@ -180,11 +213,11 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
 
     /// Watches for changes to the configuration value at the given path.
     type WatchConfigStream =
-        Pin<Box<dyn Stream<Item = Result<WatchUpdate, Status>> + Send + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<ConfigUpdate, Status>> + Send + 'static>>;
 
     /// Watches for changes to the status of the raft node.
-    type WatchLeaderStream =
-        Pin<Box<dyn Stream<Item = Result<WatchUpdate, Status>> + Send + 'static>>;
+    type WatchClusterStream =
+        Pin<Box<dyn Stream<Item = Result<ClusterUpdate, Status>> + Send + 'static>>;
 
     /// Retrieves a configuration value by path.
     ///
@@ -265,9 +298,10 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             Ok(_reponse) => {
                 info!("Successfully set value for path: {:?}", &path);
                 // Notify watchers
-                let message = WatchUpdate {
-                    kind: Some(Kind::UpdatedValue(value.value)
-                )};
+                let message = ConfigUpdate {
+                    update_type: Some (ConfigUpdateType::UpdatedValue(value.value)),
+                    path: path.path.clone(),
+                };
                 self.watch_manager.notify(&path.path, message).await;
                 Ok(Response::new(Empty {}))
             }
@@ -339,8 +373,9 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
             Ok(_response) => {
                 info!("Successfully removed value for path: {:?}", &config_path);
                 // Notify watchers
-                let message = WatchUpdate {
-                    kind: Some(Kind::Removed(Empty {}))
+                let message = ConfigUpdate {
+                    update_type: Some(ConfigUpdateType::Removed(Empty {})),
+                    path: config_path.path.clone(),
                 };
                 self.watch_manager.notify(&config_path.path, message).await;
                 Ok(Response::new(Empty {}))
@@ -424,6 +459,17 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         let config_path = request.into_inner();
         info!("Received watch config request for path: {:?}", &config_path);
 
+        let initial_value = self.get(Request::new(config_path.clone())).await.ok().map(|resp| resp.into_inner().value);
+        let initial_update = match initial_value {
+            Some(value) => ConfigUpdate {
+                update_type: Some(ConfigUpdateType::UpdatedValue(value)),
+                path: config_path.path.clone(),
+            },
+            _  => {
+                return Err(Status::not_found(format!("No config at {}", config_path.path)))
+            }
+        };
+
         let rx = self.watch_manager.watch(config_path.path.clone()).await.map_err(|e| {
             Status::internal(format!("Failed to subscribe to watcher: {}", e))
         })?;
@@ -431,17 +477,6 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         let stream = BroadcastStream::new(rx).map(move |result| {
             result.map_err(|e| Status::cancelled(format!("{}",e)))
         });
-
-        let initial_value = self.get(Request::new(config_path.clone())).await.ok().map(|resp| resp.into_inner().value);
-        let initial_update = if let Some(value) = initial_value {
-            WatchUpdate {
-                kind: Some(Kind::UpdatedValue(value)),
-            }
-        } else {
-             WatchUpdate {
-                kind: Some(Kind::Removed(Empty {})),
-            }
-        };
 
         let stream = tokio_stream::once(Ok(initial_update)).chain(stream);
         Ok(Response::new(Box::pin(stream) as Self::WatchConfigStream))
@@ -458,16 +493,16 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
     }
 
     #[instrument(skip(self))]
-    async fn watch_leader(
+    async fn watch_cluster(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<Self::WatchLeaderStream>, Status>
+    ) -> Result<Response<Self::WatchClusterStream>, Status>
     {
 
-        info!("Received watch leader request");
+        info!("Received watch cluster request");
 
-        let rx = self.watch_manager.watch_leader().await.map_err(|e| {
-            Status::internal(format!("Failed to subscribe to leader: {}", e))
+        let rx = self.watch_manager.watch_cluster().await.map_err(|e| {
+            Status::internal(format!("Failed to subscribe to cluster: {}", e))
         })?;
 
         // Convert the receiver into a stream, mapping errors as necessary.
@@ -476,10 +511,7 @@ impl<CR: ConferRepository + 'static> ConferService for ConferServiceImpl<CR> {
         });
 
 
-        Ok(Response::new(Box::pin(stream) as Self::WatchConfigStream))
-
-        // Return the stream.
-        //Ok(Response::new(Box::pin(stream) as Self::WatchLeaderStream))
+        Ok(Response::new(Box::pin(stream) as Self::WatchClusterStream))
     }
 
 

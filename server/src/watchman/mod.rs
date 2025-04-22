@@ -1,19 +1,19 @@
 use tokio::sync::broadcast;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use crate::proto::confer::v1::WatchUpdate;
+
+use crate::proto::confer::v1::{ConfigUpdate, ClusterUpdate};
 
 /// `WatchMan` manages watchers for configuration changes and leader changes.
 pub struct WatchMan {
     /// Stores watchers for configuration paths.  The key is the configuration path,
     /// and the value is a `broadcast::Sender` which is used to send updates to
     /// all clients watching that path.
-    watchers: RwLock<HashMap<String, broadcast::Sender<WatchUpdate>>>,
-    /// Stores watchers for leader change events.  Each sender is used to notify
-    /// clients when a leader change occurs.
-    leader_watchers: RwLock<Vec<broadcast::Sender<WatchUpdate>>>,
+    config_watchers: RwLock<HashMap<String, broadcast::Sender<ConfigUpdate>>>,
+    /// Stores watchers for cluster change events.
+    cluster_watchers: RwLock<broadcast::Sender<ClusterUpdate>>,
     /// The buffer size for the broadcast channels used for both configuration
-    /// watchers and leader watchers.  This determines how many messages can be
+    /// watchers and cluster watchers.  This determines how many messages can be
     /// buffered if clients are slow to receive them.
     buffer_size: usize,
 }
@@ -25,9 +25,10 @@ impl WatchMan {
     ///
     /// * `buffer_size` - The size of the buffer for the broadcast channels.
     pub fn new(buffer_size: usize) -> Self {
+        let (cluster_tx, _) = broadcast::channel(buffer_size);
         WatchMan {
-            watchers: RwLock::new(HashMap::new()),
-            leader_watchers: RwLock::new(Vec::new()),
+            config_watchers: RwLock::new(HashMap::new()),
+            cluster_watchers: RwLock::new(cluster_tx),
             buffer_size,
         }
     }
@@ -43,8 +44,8 @@ impl WatchMan {
     /// # Returns
     ///
     /// A `broadcast::Receiver` which can be used to receive updates for the path.
-    pub async fn watch(&self, path: String) -> Result<broadcast::Receiver<WatchUpdate>, tonic::Status> {
-        let mut w = self.watchers.write().await;
+    pub async fn watch(&self, path: String) -> Result<broadcast::Receiver<ConfigUpdate>, tonic::Status> {
+        let mut w = self.config_watchers.write().await;
         let sender = w.entry(path.clone()).or_insert_with(|| broadcast::channel(self.buffer_size).0);
         Ok(sender.subscribe())
     }
@@ -56,7 +57,7 @@ impl WatchMan {
     ///
     /// * `path` - The path of the configuration to unwatch.
     pub async fn unwatch(&self, path: &str) {
-        let mut w = self.watchers.write().await;
+        let mut w = self.config_watchers.write().await;
         w.remove(path);
     }
 
@@ -66,52 +67,27 @@ impl WatchMan {
     ///
     /// * `path` - The path of the configuration that changed.
     /// * `message` - The message to send to the watchers.
-    pub async fn notify(&self, path: &str, message: WatchUpdate) {
-        if let Some(sender) = self.watchers.read().await.get(path) {
+    pub async fn notify(&self, path: &str, message: ConfigUpdate) {
+        if let Some(sender) = self.config_watchers.read().await.get(path) {
             let _ = sender.send(message);
         }
     }
 
-    /// Returns a vector of all `broadcast::Sender`s for configuration watchers.
-    /// This is used when the server loses leadership to notify all watchers.
-    //pub async fn all_senders(&self) -> Vec<broadcast::Sender<WatchUpdate>> {
-        //let r = self.watchers.read().await;
-        //r.values().cloned().collect()
-    //}
-
-    /// Clears all configuration watchers.  This is called when the server
-    /// loses leadership.
-    pub async fn clear(&self) {
-        let mut w = self.watchers.write().await;
-        w.clear();
-    }
-
-    /// Starts watching for leader change events.  This creates a new
-    /// `broadcast::Sender` for leader change events and subscribes to it.
+    /// Starts watching for cluster change events.  This creates a new
+    /// `broadcast::Sender` for cluster change events and subscribes to it.
     ///
     /// # Returns
     ///
-    /// A `broadcast::Receiver` which can be used to receive leader change notifications.
-    pub async fn watch_leader(&self) -> Result<broadcast::Receiver<WatchUpdate>, tonic::Status> {
-        let mut lw = self.leader_watchers.write().await;
-        let (tx, rx) = broadcast::channel(self.buffer_size);
-        lw.push(tx);
-        Ok(rx)
+    /// A `broadcast::Receiver` which can be used to receive cluster change notifications.
+    pub async fn watch_cluster(&self) -> Result<broadcast::Receiver<ClusterUpdate>, tonic::Status> {
+        let sender = self.cluster_watchers.read().await;
+        Ok(sender.subscribe())
     }
 
-    /// Notifies all leader watchers of a leader change.
-    pub async fn notify_leader_change(&self, message: WatchUpdate) {
-        let lw = self.leader_watchers.read().await;
-        for sender in lw.iter() {
-            let _ = sender.send(message.clone());
-        }
-    }
-
-    /// Clears all leader watchers.  This is called when the server
-    /// loses leadership.
-    pub async fn clear_leader_watchers(&self) {
-        let mut lw = self.leader_watchers.write().await;
-        lw.clear();
+    /// Notifies all cluster watchers of a cluster change.
+    pub async fn notify_cluster_change(&self, message: ClusterUpdate) {
+        let sender = self.cluster_watchers.read().await;
+        let _ = sender.send(message);
     }
 }
 
@@ -121,8 +97,8 @@ mod tests {
     use super::*;
     use tokio::time;
     use tokio::sync::broadcast::error::RecvError;
-    use crate::proto::confer::v1::watch_update::Kind;
-    use crate::proto::confer::v1::LeaderInfo;
+    use crate::proto::confer::v1::watch_update::UpdateType;
+    use crate::proto::confer::v1::Node;
 
     #[tokio::test]
     async fn test_watch_and_notify() {
@@ -132,15 +108,15 @@ mod tests {
 
         // Notify the watcher
         let expected_data = vec![1, 2, 3];
-        let message = WatchUpdate {
-            kind: Some(Kind::UpdatedValue(expected_data.clone()))
+        let message = ConfigUpdate {
+            update_type: Some(UpdateType::ConfigUpdated(expected_data.clone()))
         };
         watchman.notify(path.as_str(), message).await;
 
         // Receive the notification
         let received = rx.recv().await.unwrap();
         match received {
-            WatchUpdate{kind: Some(Kind::UpdatedValue(data))} => {
+            ConfigUpdate{update_type: Some(UpdateType::ConfigUpdated(data))} => {
                 assert_eq!(data, expected_data);
             }
             _ => panic!("Unexpected message type"),
@@ -157,8 +133,8 @@ mod tests {
         watchman.unwatch(path.as_str()).await;
 
         // Notify after unwatch should not send message
-        let message = WatchUpdate {
-            kind: Some(Kind::UpdatedValue(vec![1,2,3]))
+        let message = ConfigUpdate {
+            update_type: Some(UpdateType::ConfigUpdated(vec![1,2,3]))
         };
         watchman.notify(path.as_str(), message).await;
 
@@ -172,15 +148,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_leader_watch_and_notify() {
+    async fn test_cluster_watch_and_notify() {
         let watchman = WatchMan::new(16);
-        let mut rx = watchman.watch_leader().await.unwrap();
+        let mut rx = watchman.watch_cluster().await.unwrap();
 
-        // Notify about leader change
-        let message = WatchUpdate {
-            kind : Some(Kind::LeaderChanged(LeaderInfo {address: "new_address".to_string()}))
+        // Notify about cluster change
+        let message = ConfigUpdate {
+            update_type : Some(UpdateType::LeaderChanged(Node {node_id: 1, addr: "new_address".to_string()}))
         };
-        watchman.notify_leader_change(message).await;
+        watchman.notify_cluster_change(message).await;
 
         // Receive the notification
         rx.recv().await.unwrap();
@@ -198,8 +174,8 @@ mod tests {
         watchman.clear().await;
 
         // Notify after clear should not send messages
-        let message_1 = WatchUpdate { kind: Some(Kind::UpdatedValue(vec![1])) };
-        let message_2 = WatchUpdate { kind: Some(Kind::UpdatedValue(vec![2])) };
+        let message_1 = ConfigUpdate { update_type: Some(UpdateType::ConfigUpdated(vec![1])) };
+        let message_2 = ConfigUpdate { update_type: Some(UpdateType::ConfigUpdated(vec![2])) };
 
         watchman.notify(path1.as_str(), message_1).await;
         watchman.notify(path2.as_str(), message_2).await;
@@ -220,18 +196,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clear_leader_watchers() {
+    async fn test_clear_cluster_watchers() {
         let watchman = WatchMan::new(16);
-        let mut rx = watchman.watch_leader().await.unwrap();
+        let mut rx = watchman.watch_cluster().await.unwrap();
 
-        // Clear leader watchers
-        watchman.clear_leader_watchers().await;
+        // Clear cluster watchers
+        watchman.clear_cluster_watchers().await;
 
         // Notify after clear should not send message
-        let message = WatchUpdate {
-            kind : Some(Kind::LeaderChanged(LeaderInfo{address:"new_address".to_string()}))
+        let message = ClusterUpdate {
+            update_type : Some(UpdateType::LeaderChanged(Node {node_id: 1, addr:"new_address".to_string()}))
         };
-        watchman.notify_leader_change(message).await;
+        watchman.notify_cluster_change(message).await;
 
         let timeout = time::Duration::from_millis(1_000);
         let result = tokio::time::timeout(timeout, rx.recv()).await;

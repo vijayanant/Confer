@@ -21,15 +21,12 @@ service ConferService {
 
   // WatchConfig watches for changes to the configuration value at the given path.
   // The server sends a stream of WatchUpdate messages to the client.
-  rpc WatchConfig(ConfigPath) returns (stream WatchUpdate) {}
+  rpc WatchConfig(ConfigPath) returns (stream ConfigUpdate) {}
 
   // UnwatchConfig stops watching the configuration at the given path.
   rpc UnwatchConfig(ConfigPath) returns (Empty) {}
 
-  // WatchLeader watches for changes in the Raft leader.  The server sends a
-  // WatchUpdate message whenever the leader changes.
-  rpc WatchLeader(Empty) returns (stream WatchUpdate) {}
-
+  rpc WatchCluster(Empty) returns (stream ClusterUpdate);
 
   // ------- Cluster operations ------------
 
@@ -142,16 +139,19 @@ message NodeIdSet {
 }
 
 // WatchUpdate is the message sent by the server to clients watching a configuration.
-message WatchUpdate {
-  oneof kind {
-    bytes updated_value = 1;           // The updated value of the configuration.
-    LeaderInfo leader_changed = 2;     // Indicates a change in Raft leadership.
-    Empty removed = 3; // Indicates the configuration was removed.
+message ConfigUpdate {
+  oneof update_type {
+    bytes updated_value = 1;
+    Empty removed = 2;
   }
+  string path = 3;
 }
 
-// LeaderInfo contains information about the Raft leader.
-message LeaderInfo {
-  string address = 1; // The address of the leader.
+message ClusterUpdate {
+  oneof update_type {
+    Node leader_changed = 1;
+    Node member_added = 2;
+    uint64 member_removed = 3;
+  }
 }
 
